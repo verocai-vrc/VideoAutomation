@@ -99,7 +99,27 @@ class ParceiroAutomacao:
         self.log("[*] A planear cronologia das imagens e a renderizar vídeo...")
         if not os.path.exists(output_dir): os.makedirs(output_dir)
         tts_audio = AudioFileClip(audio_p)
-        duracao_total = tts_audio.duration
+        duracao_planeada = tts_audio.duration
+
+        def fit_to_vertical(clip):
+            w, h = clip.size
+            target_ratio = 1080 / 1920.0
+            clip_ratio = w / float(max(h, 1))
+            
+            if clip_ratio > target_ratio:
+                if hasattr(clip, 'resized'): clip = clip.resized(height=1920)
+                else: clip = clip.resize(height=1920)
+            else:
+                if hasattr(clip, 'resized'): clip = clip.resized(width=1080)
+                else: clip = clip.resize(width=1080)
+                
+            w, h = clip.size
+            if hasattr(clip, 'cropped'):
+                clip = clip.cropped(width=1080, height=1920, x_center=w/2, y_center=h/2)
+            else:
+                clip = clip.crop(width=1080, height=1920, x_center=w/2, y_center=h/2)
+            
+            return clip
 
         def get_media_clip(path, dur):
             if path.lower().endswith(('.mp4', '.mov', '.avi', '.webm')):
@@ -107,14 +127,11 @@ class ParceiroAutomacao:
                 if clip.duration < dur:
                     repeats = int(dur // clip.duration) + 1
                     clip = concatenate_videoclips([clip] * repeats, method="compose")
-                if hasattr(clip, 'subclipped'):
-                    clip = clip.subclipped(0, dur)
-                else:
-                    clip = clip.subclip(0, dur)
-                if hasattr(clip, 'resized'):
-                    clip = clip.resized(height=1920)
-                else:
-                    clip = clip.resize(height=1920)
+                    if hasattr(clip, 'subclipped'):
+                        clip = clip.subclipped(0, dur)
+                    else:
+                        clip = clip.subclip(0, dur)
+                clip = fit_to_vertical(clip)
                 return clip
             else:
                 clip = ImageClip(np.array(Image.open(path).convert('RGB')))
@@ -122,10 +139,7 @@ class ParceiroAutomacao:
                     clip = clip.with_duration(dur)
                 else:
                     clip = clip.set_duration(dur)
-                if hasattr(clip, 'resized'):
-                    clip = clip.resized(height=1920)
-                else:
-                    clip = clip.resize(height=1920)
+                clip = fit_to_vertical(clip)
                 return clip
 
         # 1. Carregar legendas primeiro para ter tempos precisos
@@ -150,9 +164,9 @@ class ParceiroAutomacao:
         if not imagens_info:
             video_base = ColorClip(size=(1080, 1920), color=(0,0,0))
             if hasattr(video_base, 'with_duration'):
-                video_base = video_base.with_duration(duracao_total)
+                video_base = video_base.with_duration(duracao_planeada)
             else:
-                video_base = video_base.set_duration(duracao_total)
+                video_base = video_base.set_duration(duracao_planeada)
         else:
             for info in imagens_info:
                 kw = info['keyword'].lower().strip()
@@ -172,7 +186,7 @@ class ParceiroAutomacao:
             matched.sort(key=lambda x: x[0])
             
             if not matched:
-                dur = duracao_total / max(1, len(unmatched))
+                dur = duracao_planeada / max(1, len(unmatched))
                 img_clips = [get_media_clip(img, dur) for img in unmatched]
             else:
                 if matched[0][0] > 0.5:
@@ -184,18 +198,20 @@ class ParceiroAutomacao:
                 
                 if unmatched:
                     last_t = starts[-1]
-                    step = (duracao_total - last_t) / (len(unmatched) + 1)
+                    step = (duracao_planeada - last_t) / (len(unmatched) + 1)
                     for i, u in enumerate(unmatched):
                         starts.append(last_t + step * (i + 1))
                         paths.append(u)
                         
                 img_clips = []
                 for i in range(len(starts)):
-                    dur = (starts[i+1] if i+1 < len(starts) else duracao_total) - starts[i]
+                    dur = (starts[i+1] if i+1 < len(starts) else duracao_planeada) - starts[i]
                     if dur > 0:
                         img_clips.append(get_media_clip(paths[i], dur))
 
             video_base = concatenate_videoclips(img_clips, method="compose")
+
+        duracao_final = video_base.duration if hasattr(video_base, 'duration') and video_base.duration else duracao_planeada
 
         audio_layers = []
         if video_base.audio:
@@ -213,14 +229,16 @@ class ParceiroAutomacao:
                 elif hasattr(bg_clip, 'volumex'): bg_clip = bg_clip.volumex(bg_volume)
                 
                 if loop_bg:
-                    repeats = int(duracao_total // bg_clip.duration) + 1
+                    repeats = int(duracao_final // bg_clip.duration) + 1
                     bg_clips = [bg_clip.with_start(i * bg_clip.duration) for i in range(repeats)]
-                    bg_clip = CompositeAudioClip(bg_clips).with_duration(duracao_total)
+                    bg_clip = CompositeAudioClip(bg_clips)
+                    if hasattr(bg_clip, 'with_duration'): bg_clip = bg_clip.with_duration(duracao_final)
+                    else: bg_clip = bg_clip.set_duration(duracao_final)
                 else:
                     if hasattr(bg_clip, 'with_duration'):
-                        bg_clip = bg_clip.with_duration(min(duracao_total, bg_clip.duration))
+                        bg_clip = bg_clip.with_duration(min(duracao_final, bg_clip.duration))
                     else:
-                        bg_clip = bg_clip.set_duration(min(duracao_total, bg_clip.duration))
+                        bg_clip = bg_clip.set_duration(min(duracao_final, bg_clip.duration))
                     
                 audio_layers.append(bg_clip)
             except Exception as e:
@@ -273,9 +291,16 @@ class ParceiroAutomacao:
             alpha = img_np[:, :, 3] / 255.0
             
             clip = ImageClip(rgb)
+            try:
+                # For newer MoviePy versions (e.g., 2.x)
+                mask_clip = ImageClip(alpha, is_mask=True)
+            except TypeError:
+                # Fallback for older MoviePy versions (e.g., 1.x)
+                mask_clip = ImageClip(alpha, ismask=True)
+
             if hasattr(clip, 'with_mask'):
-                return clip.with_mask(ImageClip(alpha, ismask=True))
-            return clip.set_mask(ImageClip(alpha, ismask=True))
+                return clip.with_mask(mask_clip)
+            return clip.set_mask(mask_clip)
 
         for line in subs:
             start = line.start / 1000.0
@@ -283,11 +308,20 @@ class ParceiroAutomacao:
             duration = end - start
             if duration <= 0: continue
             
-            txt = criar_legenda_pil(line.text).with_start(start).with_duration(duration).with_position(('center', 1400))
+            clip_sub = criar_legenda_pil(line.text)
+            if hasattr(clip_sub, 'with_start'):
+                txt = clip_sub.with_start(start).with_duration(duration).with_position(('center', 1400))
+            else:
+                txt = clip_sub.set_start(start).set_duration(duration).set_position(('center', 1400))
             subtitle_clips.append(txt)
 
         # 4. Sobrepor tudo
-        video_final = CompositeVideoClip([video_base] + subtitle_clips)
+        video_final = CompositeVideoClip([video_base] + subtitle_clips, size=(1080, 1920))
+        if hasattr(video_final, 'with_duration'):
+            video_final = video_final.with_duration(duracao_final)
+        else:
+            video_final = video_final.set_duration(duracao_final)
+            
         out = os.path.join(output_dir, "video_legendado.mp4")
         video_final.write_videofile(out, fps=24, codec="libx264", audio_codec="aac")
         return out
