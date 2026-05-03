@@ -1,12 +1,11 @@
 ### To do
-- Implement mp4 loading for video snippets
 - Implement especific last or first image
 - Toggleable Narration
-- Toggleable Subtitles
 - better GUI
     - Toggle-boxes corner
     - Sliders Corner
     - Prompt box corner
     - New name on window
-- Alternate to DuckDuckGo
+- Alternate to DuckDuckGo API
 - Crash handling give solution options instead of killing the process
+- solve: MoviePy error No Suitable Formats
