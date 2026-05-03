@@ -12,7 +12,7 @@ class AutomacaoGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Video Automation Setup")
-        self.root.geometry("650x880")
+        self.root.geometry("650x920")
         
         # --- Dark Theme Colors ---
         bg_color = "#2b2b2b"
@@ -71,6 +71,11 @@ class AutomacaoGUI:
             "The script must be in English, engaging, and have at least 180 words. Return ONLY the spoken text."
         )
         self.prompt_text.insert(tk.END, default_prompt)
+        
+        # Number of Images
+        tk.Label(root, text="Number of Images in Video:", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack(pady=(10, 0))
+        self.num_images_var = tk.IntVar(value=5)
+        tk.Spinbox(root, from_=1, to=100, textvariable=self.num_images_var, width=10, bg=entry_bg, fg=fg_color, insertbackground=fg_color, buttonbackground=btn_bg).pack(pady=5)
         
         # Internet Search Toggle
         self.use_internet_search_var = tk.BooleanVar(value=True)
@@ -141,20 +146,21 @@ class AutomacaoGUI:
         bg_music = self.bg_music_var.get().strip()
         bg_volume = self.volume_scale.get()
         loop_bg = self.loop_bg_var.get()
+        num_images = self.num_images_var.get()
         
         # Use a background thread to prevent UI freezing
-        threading.Thread(target=self.run_automation_thread, args=(model, prompt, terms, out_dir, self.local_imgs, use_internet, bg_music, bg_volume, loop_bg), daemon=True).start()
+        threading.Thread(target=self.run_automation_thread, args=(model, prompt, terms, out_dir, self.local_imgs, use_internet, bg_music, bg_volume, loop_bg, num_images), daemon=True).start()
         
-    def run_automation_thread(self, model, prompt, terms, out_dir, local_imgs, use_internet, bg_music, bg_volume, loop_bg):
+    def run_automation_thread(self, model, prompt, terms, out_dir, local_imgs, use_internet, bg_music, bg_volume, loop_bg, num_images):
         try:
-            asyncio.run(self.async_workflow(model, prompt, terms, out_dir, local_imgs, use_internet, bg_music, bg_volume, loop_bg))
+            asyncio.run(self.async_workflow(model, prompt, terms, out_dir, local_imgs, use_internet, bg_music, bg_volume, loop_bg, num_images))
             self.log(f"\n[*] DONE! Video saved to {os.path.join(out_dir, 'video_legendado.mp4')}")
         except Exception as e:
             self.log(f"\n[!] Error: {str(e)}")
         finally:
             self.root.after(0, lambda: self.btn.config(state='normal'))
             
-    async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_internet, bg_music, bg_volume, loop_bg):
+    async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_internet, bg_music, bg_volume, loop_bg, num_images):
         bot = ParceiroAutomacao(model=model, log_cb=self.log)
         
         try:
@@ -175,19 +181,30 @@ class AutomacaoGUI:
                 kw = os.path.splitext(os.path.basename(path))[0].replace('_', ' ').replace('-', ' ')
                 imagens_info.append({'path': path, 'keyword': kw})
                 self.log(f"[*] Imagem local adicionada à fila: {kw}")
+                if len(imagens_info) >= num_images:
+                    self.log(f"[*] Required quantity of {num_images} images reached with local files. Skipping internet search.")
+                    break
 
             # 2. Processar imagens DuckDuckGo
-            if terms and use_internet:
-                self.log("[*] A descarregar imagens do DuckDuckGo...")
+            if terms and use_internet and len(imagens_info) < num_images:
+                remaining_to_download = num_images - len(imagens_info)
+                self.log(f"[*] {len(imagens_info)} local images loaded. Searching DuckDuckGo for the remaining {remaining_to_download} image(s)...")
                 with DDGS() as ddgs:
                     for i, t in enumerate(terms):
-                        self.log(f"  -> A pesquisar: {t}")
+                        if len(imagens_info) >= num_images:
+                            break
+                            
+                        remaining_terms = len(terms) - i
+                        remaining_images = num_images - len(imagens_info)
+                        target_for_term = (remaining_images + remaining_terms - 1) // remaining_terms
+                        
+                        self.log(f"  -> A pesquisar: {t} (A tentar descarregar {target_for_term} imagens)")
                         if i > 0: await asyncio.sleep(2)
                         
                         res = []
                         for attempt in range(3):
                             try:
-                                res = list(ddgs.images(t, max_results=3, safesearch="on"))
+                                res = list(ddgs.images(t, max_results=target_for_term * 3, safesearch="on"))
                                 break
                             except Exception as e:
                                 if "403" in str(e) or "Ratelimit" in str(e):
@@ -202,20 +219,42 @@ class AutomacaoGUI:
                                     break
                                 
                         if res:
+                            downloaded_for_term = 0
                             for img_data in res:
+                                if len(imagens_info) >= num_images or downloaded_for_term >= target_for_term:
+                                    break
                                 try:
-                                    path = os.path.join(ASSETS_DIR, f"img_ddg_{i}.jpg")
+                                    path = os.path.join(ASSETS_DIR, f"img_ddg_{len(imagens_info)}.jpg")
                                     img_content = requests.get(img_data['image'], timeout=10).content
                                     with open(path, 'wb') as f: f.write(img_content)
                                     imagens_info.append({'path': path, 'keyword': t})
-                                    break  # Success, break out of retry loop
+                                    downloaded_for_term += 1
                                 except Exception as e:
                                     self.log(f"  [!] Link falhou ({str(e)[:30]}...). A tentar outra...")
                             
             if not imagens_info:
                 raise ValueError("No images were found or downloaded.")
         except Exception as e:
-            raise RuntimeError(f"Image Collection failed: {str(e)}")
+            self.log(f"[!] Image fetching interrupted: {str(e)}")
+            choice = self.handle_image_error_sync(len(imagens_info), str(e))
+            
+            if choice == "cancel":
+                self.log("[!] Process cancelled by user.")
+                return
+            elif choice == "proceed":
+                if not imagens_info:
+                    raise RuntimeError("Cannot proceed with 0 images.")
+                self.log("[*] Proceeding with available images.")
+            elif choice == "select_more":
+                self.log("[*] Waiting for user to select additional images...")
+                new_imgs = self.select_more_images_sync()
+                if new_imgs:
+                    for path in new_imgs:
+                        kw = os.path.splitext(os.path.basename(path))[0].replace('_', ' ').replace('-', ' ')
+                        imagens_info.append({'path': path, 'keyword': kw})
+                        self.log(f"[*] Additional local image added: {kw}")
+                if not imagens_info:
+                    raise RuntimeError("Still no images available to proceed.")
                     
         try:
             bot.criar_video_com_legendas(audio_file, srt_file, imagens_info, guiao, output_dir=out_dir, bg_music_path=bg_music, bg_volume=bg_volume, loop_bg=loop_bg)
