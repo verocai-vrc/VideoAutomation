@@ -13,115 +13,143 @@ from core import ParceiroAutomacao
 class AutomacaoGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Video Automation Setup")
-        self.root.geometry("650x920")
+        self.root.title("VideoMaekar")
+        self.root.geometry("1100x750")
         
-        # --- Dark Theme Colors ---
+        # --- Theme Colors ---
         bg_color = "#2b2b2b"
+        panel_bg = "#323232"
         fg_color = "#ffffff"
         entry_bg = "#3b3b3b"
         btn_bg = "#555555"
         
         self.root.configure(bg=bg_color)
         
-        # Output Directory
-        tk.Label(root, text="Output Directory:", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack(pady=(15, 0))
-        out_frame = tk.Frame(root, bg=bg_color)
-        out_frame.pack(pady=5)
+        # --- Variables ---
         self.out_dir_var = tk.StringVar(value=os.path.abspath(OUTPUT_DIR))
-        tk.Entry(out_frame, textvariable=self.out_dir_var, width=55, bg=entry_bg, fg=fg_color, insertbackground=fg_color).pack(side=tk.LEFT, padx=5)
-        tk.Button(out_frame, text="Browse", command=self.browse_dir, bg=btn_bg, fg=fg_color).pack(side=tk.LEFT)
-        
-        # Model
-        tk.Label(root, text="Ollama Model:", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack(pady=(10, 0))
         self.model_var = tk.StringVar()
+        self.local_imgs = []
+        self.bg_music_var = tk.StringVar()
+        self.loop_bg_var = tk.BooleanVar(value=True)
+        self.num_images_var = tk.IntVar(value=5)
+        self.use_videos_var = tk.BooleanVar(value=True)
+        self.use_images_var = tk.BooleanVar(value=True)
+        self.use_internet_search_var = tk.BooleanVar(value=True)
+        self.enable_narration_var = tk.BooleanVar(value=True)
+        self.transcribe_mode_var = tk.BooleanVar(value=False)
+        self.terms_var = tk.StringVar(value="The simulation theory and our reality, matrix code, digital universe, abstract technology, future city")
+        self.progress_var = tk.DoubleVar()
+        self.is_generating = False
+        self.spinner_states = ['|', '/', '-', '\\']
+        self.spinner_idx = 0
+        
+        # --- Main Layout ---
+        top_frame = tk.Frame(root, bg=bg_color)
+        top_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        bottom_frame = tk.Frame(root, bg=bg_color)
+        bottom_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        
+        # --- Columns ---
+        top_frame.columnconfigure(0, weight=1, uniform="equal_cols")
+        top_frame.columnconfigure(1, weight=1, uniform="equal_cols")
+        top_frame.columnconfigure(2, weight=1, uniform="equal_cols")
+        top_frame.rowconfigure(0, weight=1)
+
+        col1 = tk.LabelFrame(top_frame, text=" AI & Scripting ", bg=panel_bg, fg=fg_color, font=('Arial', 11, 'bold'))
+        col1.grid(row=0, column=0, sticky="nsew", padx=5)
+        
+        col2 = tk.LabelFrame(top_frame, text=" Visuals & Media ", bg=panel_bg, fg=fg_color, font=('Arial', 11, 'bold'))
+        col2.grid(row=0, column=1, sticky="nsew", padx=5)
+        
+        col3 = tk.LabelFrame(top_frame, text=" Audio & Output ", bg=panel_bg, fg=fg_color, font=('Arial', 11, 'bold'))
+        col3.grid(row=0, column=2, sticky="nsew", padx=5)
+        
+        # --- Column 1: AI & Scripting ---
+        tk.Label(col1, text="Ollama Model:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(10, 2))
         available_models = self.get_ollama_models()
         if available_models: self.model_var.set(available_models[0])
-        self.model_cb = ttk.Combobox(root, textvariable=self.model_var, values=available_models, width=37, state="readonly")
-        self.model_cb.pack(pady=5)
+        self.model_cb = ttk.Combobox(col1, textvariable=self.model_var, values=available_models, state="readonly")
+        self.model_cb.pack(fill=tk.X, padx=10, pady=2)
         
-        # Local Media
-        tk.Label(root, text="Local Media (Images/Videos, optional):", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack(pady=(10, 0))
-        img_frame = tk.Frame(root, bg=bg_color)
-        img_frame.pack(pady=5)
-        self.local_imgs = []
-        self.local_imgs_lbl = tk.Label(img_frame, text="0 files selected", bg=bg_color, fg=fg_color)
-        self.local_imgs_lbl.pack(side=tk.LEFT, padx=5)
-        tk.Button(img_frame, text="Browse Media", command=self.browse_media, bg=btn_bg, fg=fg_color).pack(side=tk.LEFT)
+        tk.Checkbutton(col1, text="Transcribe Uploaded Video (Whisper AI)", variable=self.transcribe_mode_var, command=self.update_ui_states, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color).pack(anchor='w', padx=10, pady=10)
         
-        # Background Music
-        tk.Label(root, text="Background Music (.mp3, optional):", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack(pady=(10, 0))
-        bg_frame = tk.Frame(root, bg=bg_color)
-        bg_frame.pack(pady=5)
-        self.bg_music_var = tk.StringVar()
-        tk.Entry(bg_frame, textvariable=self.bg_music_var, width=32, bg=entry_bg, fg=fg_color, insertbackground=fg_color).pack(side=tk.LEFT, padx=5)
-        tk.Button(bg_frame, text="Browse", command=self.browse_music, bg=btn_bg, fg=fg_color).pack(side=tk.LEFT, padx=5)
-        tk.Label(bg_frame, text="Vol:", bg=bg_color, fg=fg_color).pack(side=tk.LEFT)
-        self.volume_scale = tk.Scale(bg_frame, from_=0.0, to=1.0, resolution=0.01, orient=tk.HORIZONTAL, bg=bg_color, fg=fg_color, highlightthickness=0, length=80)
-        self.volume_scale.set(0.1)  # Default background volume at 10%
-        self.volume_scale.pack(side=tk.LEFT, padx=5)
-        
-        self.loop_bg_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(bg_frame, text="Loop", variable=self.loop_bg_var, bg=bg_color, fg=fg_color, selectcolor=btn_bg, activebackground=bg_color, activeforeground=fg_color).pack(side=tk.LEFT, padx=5)
-        
-        # Prompt
-        tk.Label(root, text="AI Prompt:", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack(pady=(10, 0))
-        self.prompt_text = scrolledtext.ScrolledText(root, height=8, width=75, bg=entry_bg, fg=fg_color, insertbackground=fg_color)
-        self.prompt_text.pack(pady=5)
+        tk.Label(col1, text="AI Prompt:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
+        self.prompt_text = scrolledtext.ScrolledText(col1, height=10, bg=entry_bg, fg=fg_color, insertbackground=fg_color)
+        self.prompt_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
         default_prompt = (
             "Write a detailed educational script for a 70-second video about 'The simulation theory and our reality'. "
             "The script must be in English, engaging, and have at least 180 words. Return ONLY the spoken text."
         )
         self.prompt_text.insert(tk.END, default_prompt)
         
-        # Number of Images
-        tk.Label(root, text="Number of Images in Video:", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack(pady=(10, 0))
-        self.num_images_var = tk.IntVar(value=5)
-        self.num_images_spinbox = tk.Spinbox(root, from_=1, to=100, textvariable=self.num_images_var, width=10, bg=entry_bg, fg=fg_color, insertbackground=fg_color, buttonbackground=btn_bg)
-        self.num_images_spinbox.pack(pady=5)
+        # --- Column 2: Visuals & Media ---
+        tk.Label(col2, text="Local Media (Images/Videos):", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(10, 2))
+        media_btn_frame = tk.Frame(col2, bg=panel_bg)
+        media_btn_frame.pack(fill=tk.X, padx=10, pady=2)
+        tk.Button(media_btn_frame, text="Browse Media", command=self.browse_media, bg=btn_bg, fg=fg_color).pack(side=tk.LEFT)
+        self.local_imgs_lbl = tk.Label(media_btn_frame, text="0 files selected", bg=panel_bg, fg=fg_color)
+        self.local_imgs_lbl.pack(side=tk.LEFT, padx=10)
         
-        # Toggles
-        toggles_frame = tk.Frame(root, bg=bg_color)
-        toggles_frame.pack(pady=(10, 0))
+        toggles_frame = tk.Frame(col2, bg=panel_bg)
+        toggles_frame.pack(fill=tk.X, padx=10, pady=10)
+        tk.Checkbutton(toggles_frame, text="Use Videos", variable=self.use_videos_var, command=self.update_ui_states, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color).pack(anchor='w', pady=2)
+        tk.Checkbutton(toggles_frame, text="Use Images", variable=self.use_images_var, command=self.update_ui_states, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color).pack(anchor='w', pady=2)
+        self.internet_search_cb = tk.Checkbutton(toggles_frame, text="Internet Image Search", variable=self.use_internet_search_var, command=self.update_ui_states, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color)
+        self.internet_search_cb.pack(anchor='w', pady=2)
         
-        self.use_videos_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(toggles_frame, text="Use Videos", variable=self.use_videos_var, command=self.update_ui_states, bg=bg_color, fg=fg_color, selectcolor=btn_bg, activebackground=bg_color, activeforeground=fg_color, font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=5)
+        tk.Label(col2, text="Number of Images:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
+        self.num_images_spinbox = tk.Spinbox(col2, from_=1, to=100, textvariable=self.num_images_var, bg=entry_bg, fg=fg_color, insertbackground=fg_color, buttonbackground=btn_bg)
+        self.num_images_spinbox.pack(fill=tk.X, padx=10, pady=2)
         
-        self.use_images_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(toggles_frame, text="Use Images", variable=self.use_images_var, command=self.update_ui_states, bg=bg_color, fg=fg_color, selectcolor=btn_bg, activebackground=bg_color, activeforeground=fg_color, font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=5)
+        tk.Label(col2, text="Image Search Terms (comma separated):", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(10, 2))
+        self.terms_entry = tk.Entry(col2, textvariable=self.terms_var, bg=entry_bg, fg=fg_color, insertbackground=fg_color)
+        self.terms_entry.pack(fill=tk.X, padx=10, pady=(0, 10))
         
-        self.use_internet_search_var = tk.BooleanVar(value=True)
-        self.internet_search_cb = tk.Checkbutton(toggles_frame, text="Internet Search", variable=self.use_internet_search_var, command=self.update_ui_states, bg=bg_color, fg=fg_color, selectcolor=btn_bg, activebackground=bg_color, activeforeground=fg_color, font=('Arial', 10, 'bold'))
-        self.internet_search_cb.pack(side=tk.LEFT, padx=5)
+        # --- Column 3: Audio & Output ---
+        tk.Label(col3, text="Output Directory:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(10, 2))
+        out_btn_frame = tk.Frame(col3, bg=panel_bg)
+        out_btn_frame.pack(fill=tk.X, padx=10, pady=2)
+        tk.Entry(out_btn_frame, textvariable=self.out_dir_var, bg=entry_bg, fg=fg_color, insertbackground=fg_color).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Button(out_btn_frame, text="Browse", command=self.browse_dir, bg=btn_bg, fg=fg_color).pack(side=tk.LEFT, padx=(5,0))
         
-        self.enable_narration_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(toggles_frame, text="Narration Audio", variable=self.enable_narration_var, bg=bg_color, fg=fg_color, selectcolor=btn_bg, activebackground=bg_color, activeforeground=fg_color, font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=5)
+        tk.Checkbutton(col3, text="Enable Narration Audio", variable=self.enable_narration_var, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color).pack(anchor='w', padx=10, pady=15)
         
-        toggles_frame2 = tk.Frame(root, bg=bg_color)
-        toggles_frame2.pack(pady=(5, 0))
-        self.transcribe_mode_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(toggles_frame2, text="Transcribe Uploaded Video (Whisper AI)", variable=self.transcribe_mode_var, command=self.update_ui_states, bg=bg_color, fg=fg_color, selectcolor=btn_bg, activebackground=bg_color, activeforeground=fg_color, font=('Arial', 10, 'bold')).pack()
+        tk.Label(col3, text="Background Music (.mp3):", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
+        bg_btn_frame = tk.Frame(col3, bg=panel_bg)
+        bg_btn_frame.pack(fill=tk.X, padx=10, pady=2)
+        tk.Entry(bg_btn_frame, textvariable=self.bg_music_var, bg=entry_bg, fg=fg_color, insertbackground=fg_color).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Button(bg_btn_frame, text="Browse", command=self.browse_music, bg=btn_bg, fg=fg_color).pack(side=tk.LEFT, padx=(5,0))
+        
+        tk.Label(col3, text="Volume:", bg=panel_bg, fg=fg_color, font=('Arial', 9)).pack(anchor='w', padx=10, pady=(10, 0))
+        vol_frame = tk.Frame(col3, bg=panel_bg)
+        vol_frame.pack(fill=tk.X, padx=10, pady=2)
+        self.volume_scale = ttk.Scale(vol_frame, from_=0.0, to=1.0, orient=tk.HORIZONTAL)
+        self.volume_scale.set(0.1)
+        self.volume_scale.pack(fill=tk.X, expand=True)
+        
+        tk.Checkbutton(col3, text="Loop Background Music", variable=self.loop_bg_var, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color).pack(anchor='w', padx=10, pady=10)
+        
+        # --- Bottom Frame: Logs & Progress ---
+        self.btn = tk.Button(bottom_frame, text="GENERATE VIDEO", command=self.start_generation, bg="#4CAF50", fg="white", font=('Arial', 14, 'bold'), pady=10)
+        self.btn.pack(fill=tk.X, pady=(0, 10))
+        
+        progress_container = tk.Frame(bottom_frame, bg=bg_color)
+        progress_container.pack(fill=tk.X, pady=5)
+        
+        self.spinner_lbl = tk.Label(progress_container, text="-", font=('Courier', 12, 'bold'), bg=bg_color, fg=fg_color, width=3)
+        self.spinner_lbl.pack(side=tk.LEFT)
+        
+        self.progress_bar = ttk.Progressbar(progress_container, variable=self.progress_var, maximum=100)
+        self.progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        self.progress_text_lbl = tk.Label(progress_container, text="0.0%", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color, width=6)
+        self.progress_text_lbl.pack(side=tk.LEFT)
+        
+        tk.Label(bottom_frame, text="Progress Logs:", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack(anchor='w')
+        self.log_area = scrolledtext.ScrolledText(bottom_frame, height=8, state='disabled', bg=entry_bg, fg=fg_color)
+        self.log_area.pack(fill=tk.BOTH, expand=True)
 
-        # Search terms
-        tk.Label(root, text="Image Search Terms (comma separated):", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack(pady=(10, 0))
-        self.terms_var = tk.StringVar(value="The simulation theory and our reality, matrix code, digital universe, abstract technology, future city")
-        self.terms_entry = tk.Entry(root, textvariable=self.terms_var, width=75, bg=entry_bg, fg=fg_color, insertbackground=fg_color)
-        self.terms_entry.pack(pady=5)
-        
-        # Generate Button
-        self.btn = tk.Button(root, text="Generate Video", command=self.start_generation, bg="#4CAF50", fg="white", font=('Arial', 12, 'bold'))
-        self.btn.pack(pady=20)
-        
-        # Progress Bar
-        self.progress_var = tk.DoubleVar()
-        self.progress_bar = ttk.Progressbar(root, variable=self.progress_var, maximum=100, length=400)
-        self.progress_bar.pack(pady=(0, 15))
-        
-        # Logs
-        tk.Label(root, text="Progress Logs:", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack()
-        self.log_area = scrolledtext.ScrolledText(root, height=12, width=75, state='disabled', bg=entry_bg, fg=fg_color)
-        self.log_area.pack(pady=5)
-        
     def update_ui_states(self):
         use_img = self.use_images_var.get()
         use_net = self.use_internet_search_var.get()
@@ -170,8 +198,19 @@ class AutomacaoGUI:
         self.log_area.config(state='disabled')
         print(msg) # Keeping terminal logs active as well
         
+    def _update_spinner(self):
+        if self.is_generating:
+            self.spinner_idx = (self.spinner_idx + 1) % len(self.spinner_states)
+            self.spinner_lbl.config(text=self.spinner_states[self.spinner_idx])
+            self.root.after(200, self._update_spinner)
+        else:
+            self.spinner_lbl.config(text="-")
+
     def update_progress(self, val):
-        self.root.after(0, lambda: self.progress_var.set(val))
+        def _set():
+            self.progress_var.set(val)
+            self.progress_text_lbl.config(text=f"{val:.1f}%")
+        self.root.after(0, _set)
 
     def start_generation(self):
         self.btn.config(state='disabled')
@@ -179,6 +218,9 @@ class AutomacaoGUI:
         self.log_area.delete(1.0, tk.END)
         self.log_area.config(state='disabled')
         self.progress_var.set(0)
+        self.progress_text_lbl.config(text="0.0%")
+        self.is_generating = True
+        self._update_spinner()
         
         model = self.model_var.get()
         prompt = self.prompt_text.get(1.0, tk.END).strip()
@@ -204,6 +246,7 @@ class AutomacaoGUI:
         except Exception as e:
             self.log(f"\n[!] Error: {str(e)}")
         finally:
+            self.is_generating = False
             self.root.after(0, lambda: self.btn.config(state='normal'))
             
     async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode):
