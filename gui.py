@@ -97,6 +97,11 @@ class AutomacaoGUI:
         self.enable_narration_var = tk.BooleanVar(value=True)
         tk.Checkbutton(toggles_frame, text="Narration Audio", variable=self.enable_narration_var, bg=bg_color, fg=fg_color, selectcolor=btn_bg, activebackground=bg_color, activeforeground=fg_color, font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=5)
         
+        toggles_frame2 = tk.Frame(root, bg=bg_color)
+        toggles_frame2.pack(pady=(5, 0))
+        self.transcribe_mode_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(toggles_frame2, text="Transcribe Uploaded Video (Whisper AI)", variable=self.transcribe_mode_var, command=self.update_ui_states, bg=bg_color, fg=fg_color, selectcolor=btn_bg, activebackground=bg_color, activeforeground=fg_color, font=('Arial', 10, 'bold')).pack()
+
         # Search terms
         tk.Label(root, text="Image Search Terms (comma separated):", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack(pady=(10, 0))
         self.terms_var = tk.StringVar(value="The simulation theory and our reality, matrix code, digital universe, abstract technology, future city")
@@ -107,6 +112,11 @@ class AutomacaoGUI:
         self.btn = tk.Button(root, text="Generate Video", command=self.start_generation, bg="#4CAF50", fg="white", font=('Arial', 12, 'bold'))
         self.btn.pack(pady=20)
         
+        # Progress Bar
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(root, variable=self.progress_var, maximum=100, length=400)
+        self.progress_bar.pack(pady=(0, 15))
+        
         # Logs
         tk.Label(root, text="Progress Logs:", font=('Arial', 10, 'bold'), bg=bg_color, fg=fg_color).pack()
         self.log_area = scrolledtext.ScrolledText(root, height=12, width=75, state='disabled', bg=entry_bg, fg=fg_color)
@@ -115,10 +125,13 @@ class AutomacaoGUI:
     def update_ui_states(self):
         use_img = self.use_images_var.get()
         use_net = self.use_internet_search_var.get()
+        transcribe = self.transcribe_mode_var.get()
         
         self.num_images_spinbox.config(state="normal" if use_img else "disabled")
         self.internet_search_cb.config(state="normal" if use_img else "disabled")
-        self.terms_entry.config(state="normal" if (use_img and use_net) else "disabled")
+        self.terms_entry.config(state="normal" if (use_img and use_net and not transcribe) else "disabled")
+        self.prompt_text.config(state="disabled" if transcribe else "normal")
+        self.model_cb.config(state="disabled" if transcribe else "readonly")
 
     def browse_dir(self):
         directory = filedialog.askdirectory(initialdir=self.out_dir_var.get())
@@ -157,11 +170,15 @@ class AutomacaoGUI:
         self.log_area.config(state='disabled')
         print(msg) # Keeping terminal logs active as well
         
+    def update_progress(self, val):
+        self.root.after(0, lambda: self.progress_var.set(val))
+
     def start_generation(self):
         self.btn.config(state='disabled')
         self.log_area.config(state='normal')
         self.log_area.delete(1.0, tk.END)
         self.log_area.config(state='disabled')
+        self.progress_var.set(0)
         
         model = self.model_var.get()
         prompt = self.prompt_text.get(1.0, tk.END).strip()
@@ -175,31 +192,36 @@ class AutomacaoGUI:
         loop_bg = self.loop_bg_var.get()
         num_images = self.num_images_var.get()
         enable_narration = self.enable_narration_var.get()
+        transcribe_mode = self.transcribe_mode_var.get()
         
         # Use a background thread to prevent UI freezing
-        threading.Thread(target=self.run_automation_thread, args=(model, prompt, terms, out_dir, self.local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration), daemon=True).start()
+        threading.Thread(target=self.run_automation_thread, args=(model, prompt, terms, out_dir, self.local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode), daemon=True).start()
         
-    def run_automation_thread(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration):
+    def run_automation_thread(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode):
         try:
-            asyncio.run(self.async_workflow(model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration))
+            asyncio.run(self.async_workflow(model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode))
             self.log(f"\n[*] DONE! Video saved to {os.path.join(out_dir, 'video_legendado.mp4')}")
         except Exception as e:
             self.log(f"\n[!] Error: {str(e)}")
         finally:
             self.root.after(0, lambda: self.btn.config(state='normal'))
             
-    async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration):
-        bot = ParceiroAutomacao(model=model, log_cb=self.log)
+    async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode):
+        bot = ParceiroAutomacao(model=model, log_cb=self.log, progress_cb=self.update_progress)
         
         try:
-            guiao = bot.gerar_guiao(prompt)
+            if transcribe_mode:
+                video_path = next((p for p in local_imgs if p.lower().endswith(('.mp4', '.mov', '.avi', '.webm'))), None)
+                if not video_path:
+                    raise RuntimeError("Modo 'Transcribe Video' ativo, mas nenhum vídeo selecionado em Local Media!")
+                srt_file = bot.transcrever_video(video_path, "projeto_v1")
+                audio_file = video_path # MoviePy extracts audio automatically
+                guiao = ""
+            else:
+                guiao = bot.gerar_guiao(prompt)
+                audio_file, srt_file = await bot.gerar_audio_e_legendas(guiao, "projeto_v1")
         except Exception as e:
-            raise RuntimeError(f"Script Generation (Ollama) failed: {str(e)}")
-            
-        try:
-            audio_file, srt_file = await bot.gerar_audio_e_legendas(guiao, "projeto_v1")
-        except Exception as e:
-            raise RuntimeError(f"Audio & Subtitle Generation failed: {str(e)}")
+            raise RuntimeError(f"Geração de Script/Áudio falhou: {str(e)}")
         
         try:
             imagens_info = []
@@ -308,6 +330,6 @@ class AutomacaoGUI:
             raise RuntimeError(f"Image Collection failed: {str(e)}")
                     
         try:
-            bot.criar_video_com_legendas(audio_file, srt_file, imagens_info, guiao, output_dir=out_dir, bg_music_path=bg_music, bg_volume=bg_volume, loop_bg=loop_bg, enable_narration=enable_narration)
+            bot.criar_video_com_legendas(audio_file, srt_file, imagens_info, guiao, output_dir=out_dir, bg_music_path=bg_music, bg_volume=bg_volume, loop_bg=loop_bg, enable_narration=enable_narration, transcribe_mode=transcribe_mode)
         except Exception as e:
             raise RuntimeError(f"Video Rendering (MoviePy) failed: {str(e)}")

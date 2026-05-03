@@ -13,15 +13,41 @@ ffmpeg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg.e
 if os.path.exists(ffmpeg_path):
     os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg_path
     os.environ["FFMPEG_BINARY"] = ffmpeg_path
+    ffmpeg_dir = os.path.dirname(os.path.abspath(__file__))
+    if ffmpeg_dir not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
 
 from moviepy import TextClip, ColorClip, CompositeVideoClip, ImageClip, AudioFileClip, VideoFileClip, concatenate_videoclips
 from moviepy.audio.AudioClip import CompositeAudioClip
 from config import OLLAMA_API_URL, OUTPUT_DIR, ASSETS_DIR
 
+try:
+    from proglog import TqdmProgressBarLogger as BaseLogger
+except ImportError:
+    try:
+        from proglog import ProgressBarLogger as BaseLogger
+    except ImportError:
+        BaseLogger = None
+
+if BaseLogger:
+    class UIProgressLogger(BaseLogger):
+        def __init__(self, progress_cb):
+            super().__init__()
+            self.progress_cb = progress_cb
+        def bars_callback(self, bar, attr, value, old_value=None):
+            super().bars_callback(bar, attr, value, old_value)
+            if attr == 'index':
+                total = self.bars[bar].get('total', 0)
+                if total > 0 and self.progress_cb:
+                    self.progress_cb((value / total) * 100)
+else:
+    UIProgressLogger = None
+
 class ParceiroAutomacao:
-    def __init__(self, model="llama3", log_cb=print):
+    def __init__(self, model="llama3", log_cb=print, progress_cb=None):
         self.model = model
         self.log = log_cb
+        self.progress_cb = progress_cb
 
     def gerar_guiao(self, prompt):
         """Gera o guião usando o prompt fornecido."""
@@ -94,7 +120,46 @@ class ParceiroAutomacao:
         self.log(f"[V] Áudio e Legendas gerados com sucesso em {ASSETS_DIR}")
         return audio_path, subs_path
 
-    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=OUTPUT_DIR, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True):
+    def transcrever_video(self, video_path, base_name):
+        try:
+            import whisper
+        except ImportError:
+            raise RuntimeError("A biblioteca Whisper não está instalada. Abra o terminal e corra: pip install openai-whisper")
+            
+        self.log("[*] A analisar o áudio do vídeo local com Whisper (isto pode demorar alguns minutos)...")
+        model = whisper.load_model("base")
+        result = model.transcribe(video_path, word_timestamps=True)
+        
+        subs_path = os.path.join(ASSETS_DIR, f"{base_name}.srt")
+        
+        def format_srt_time(seconds):
+            td = datetime.timedelta(seconds=seconds)
+            total_seconds = int(td.total_seconds())
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            secs = total_seconds % 60
+            millis = int(td.microseconds / 1000)
+            return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+        with open(subs_path, "w", encoding="utf-8") as f:
+            idx = 1
+            for segment in result.get("segments", []):
+                words = segment.get("words", [])
+                items_to_write = words if words else [segment]
+                for item in items_to_write:
+                    start_time = format_srt_time(item["start"])
+                    end_time = format_srt_time(item["end"])
+                    text = item.get("word", item.get("text", "")).strip()
+                    if text:
+                        f.write(f"{idx}\n")
+                        f.write(f"{start_time} --> {end_time}\n")
+                        f.write(f"{text}\n\n")
+                        idx += 1
+                        
+        self.log(f"[V] Transcrição concluída com sucesso em {ASSETS_DIR}")
+        return subs_path
+
+    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=OUTPUT_DIR, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True, transcribe_mode=False):
         """Monta o vídeo final com imagens sincronizadas ao guião e legendas queimadas."""
         self.log("[*] A planear cronologia das imagens e a renderizar vídeo...")
         if not os.path.exists(output_dir): os.makedirs(output_dir)
@@ -217,7 +282,7 @@ class ParceiroAutomacao:
         if video_base.audio:
             audio_layers.append(video_base.audio)
             
-        if enable_narration:
+        if enable_narration and not transcribe_mode:
             audio_layers.append(tts_audio)
             
         if bg_music_path and os.path.exists(bg_music_path):
@@ -302,13 +367,43 @@ class ParceiroAutomacao:
                 return clip.with_mask(mask_clip)
             return clip.set_mask(mask_clip)
 
-        for line in subs:
-            start = line.start / 1000.0
-            end = line.end / 1000.0
+        # Group word-by-word subtitles into cleaner, multi-word lines for rendering
+        grouped_subs = []
+        if subs:
+            current_line_text = ""
+            line_start_time = subs[0].start
+            last_word_end_time = subs[0].end
+            max_chars_per_line = 35  # Adjust as needed for aesthetics
+
+            for event in subs:
+                # If adding the new word exceeds the line limit, and the line isn't empty
+                if len(current_line_text) + len(event.text) + 1 > max_chars_per_line and current_line_text:
+                    # Finalize the current line and add it to our list
+                    grouped_subs.append({
+                        "text": current_line_text.strip(),
+                        "start": line_start_time,
+                        "end": last_word_end_time
+                    })
+                    # Start a new line with the current word
+                    current_line_text = event.text + " "
+                    line_start_time = event.start
+                else:
+                    # Otherwise, just add the word to the current line
+                    current_line_text += event.text + " "
+                last_word_end_time = event.end
+
+            # Add the final accumulated line after the loop finishes
+            if current_line_text:
+                grouped_subs.append({ "text": current_line_text.strip(), "start": line_start_time, "end": last_word_end_time })
+
+
+        for line in grouped_subs:
+            start = line['start'] / 1000.0
+            end = line['end'] / 1000.0
             duration = end - start
             if duration <= 0: continue
             
-            clip_sub = criar_legenda_pil(line.text)
+            clip_sub = criar_legenda_pil(line['text'])
             if hasattr(clip_sub, 'with_start'):
                 txt = clip_sub.with_start(start).with_duration(duration).with_position(('center', 1400))
             else:
@@ -323,5 +418,6 @@ class ParceiroAutomacao:
             video_final = video_final.set_duration(duracao_final)
             
         out = os.path.join(output_dir, "video_legendado.mp4")
-        video_final.write_videofile(out, fps=24, codec="libx264", audio_codec="aac")
+        logger = UIProgressLogger(self.progress_cb) if UIProgressLogger and self.progress_cb else "bar"
+        video_final.write_videofile(out, fps=24, codec="libx264", audio_codec="aac", logger=logger)
         return out
