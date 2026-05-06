@@ -123,7 +123,7 @@ class VideoRenderer:
                             
         return duracao_planeada, timeline_plan
 
-    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=OUTPUT_DIR, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True, transcribe_mode=False, sub_font="Arial Bold", sub_font_file=None, sub_color="yellow", sub_size=60, transition="Cut", sub_y=1300, visual_effect="None", custom_timeline=None):
+    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=OUTPUT_DIR, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True, transcribe_mode=False, sub_font="Arial Bold", sub_font_file=None, sub_color="yellow", sub_outline_color="black", sub_outline_width=3, sub_size=60, transition="Cut", sub_y=1300, visual_effect="None", custom_timeline=None):
         """Monta o vídeo final com imagens sincronizadas ao guião e legendas queimadas."""
         self.log("[*] A planear cronologia das imagens e a renderizar vídeo...")
         if not os.path.exists(output_dir): os.makedirs(output_dir)
@@ -313,6 +313,12 @@ class VideoRenderer:
         overlaid_clips = []
         base_clips = []
         
+        if video_base_original is not None:
+            if hasattr(video_base_original, 'with_start'):
+                base_clips.append(video_base_original.with_start(0))
+            else:
+                base_clips.append(video_base_original.set_start(0))
+
         if custom_timeline:
             for item in custom_timeline:
                 path = item['path']
@@ -506,14 +512,14 @@ class VideoRenderer:
             y = (altura - text_h) / 2
             
             # Desenhar o contorno (stroke)
-            stroke_width = max(2, int(sub_size * 0.06))
+            stroke_width = sub_outline_width
             for ox in range(-stroke_width, stroke_width + 1):
                 for oy in range(-stroke_width, stroke_width + 1):
                     if ox == 0 and oy == 0: continue
                     try:
-                        draw.multiline_text((x + ox, y + oy), wrapped_text, font=font, fill='black', align='center')
+                        draw.multiline_text((x + ox, y + oy), wrapped_text, font=font, fill=sub_outline_color, align='center')
                     except AttributeError:
-                        draw.text((x + ox, y + oy), wrapped_text, font=font, fill='black')
+                        draw.text((x + ox, y + oy), wrapped_text, font=font, fill=sub_outline_color)
                     
             # Desenhar o texto principal
             try:
@@ -522,20 +528,7 @@ class VideoRenderer:
                 draw.text((x, y), wrapped_text, font=font, fill=sub_color)
             
             img_np = np.array(img)
-            rgb = img_np[:, :, :3]
-            alpha = img_np[:, :, 3] / 255.0
-            
-            clip = ImageClip(rgb)
-            try:
-                # For newer MoviePy versions (e.g., 2.x)
-                mask_clip = ImageClip(alpha, is_mask=True)
-            except TypeError:
-                # Fallback for older MoviePy versions (e.g., 1.x)
-                mask_clip = ImageClip(alpha, ismask=True)
-
-            if hasattr(clip, 'with_mask'):
-                return clip.with_mask(mask_clip)
-            return clip.set_mask(mask_clip)
+            return ImageClip(img_np)
 
         # Group word-by-word subtitles into cleaner, multi-word lines for rendering
         grouped_subs = []
@@ -581,13 +574,7 @@ class VideoRenderer:
             subtitle_clips.append(txt)
 
         # 4. Sobrepor tudo
-        bg_black = ColorClip(size=(1080, 1920), color=(0,0,0))
-        if hasattr(bg_black, 'with_duration'):
-            bg_black = bg_black.with_duration(duracao_final)
-        else:
-            bg_black = bg_black.set_duration(duracao_final)
-            
-        video_final = CompositeVideoClip([bg_black] + base_clips + overlaid_clips + subtitle_clips, size=(1080, 1920))
+        video_final = CompositeVideoClip(base_clips + overlaid_clips + subtitle_clips, size=(1080, 1920), bg_color=(0,0,0))
         
         if audio_layers:
             final_audio = CompositeAudioClip(audio_layers)
