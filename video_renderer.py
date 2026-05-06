@@ -123,7 +123,7 @@ class VideoRenderer:
                             
         return duracao_planeada, timeline_plan
 
-    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=OUTPUT_DIR, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True, transcribe_mode=False, sub_font="Arial Bold", sub_color="yellow", sub_size=60, transition="Cut", sub_y=1300, visual_effect="None", custom_timeline=None):
+    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=OUTPUT_DIR, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True, transcribe_mode=False, sub_font="Arial Bold", sub_font_file=None, sub_color="yellow", sub_size=60, transition="Cut", sub_y=1300, visual_effect="None", custom_timeline=None):
         """Monta o vídeo final com imagens sincronizadas ao guião e legendas queimadas."""
         self.log("[*] A planear cronologia das imagens e a renderizar vídeo...")
         if not os.path.exists(output_dir): os.makedirs(output_dir)
@@ -468,18 +468,22 @@ class VideoRenderer:
             largura, altura = 1040, 500
             img = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
-            
-            font_map = {
-                "Arial": "arial.ttf",
-                "Arial Bold": "arialbd.ttf",
-                "Impact": "impact.ttf",
-                "Comic Sans": "comic.ttf",
-                "Times New Roman": "times.ttf"
-            }
-            font_file = font_map.get(sub_font, "arialbd.ttf")
+
+            font_to_use = None
+            if sub_font_file and os.path.exists(sub_font_file):
+                font_to_use = sub_font_file
+            else:
+                font_map = {
+                    "Arial": "arial.ttf",
+                    "Arial Bold": "arialbd.ttf",
+                    "Impact": "impact.ttf",
+                    "Comic Sans": "comic.ttf",
+                    "Times New Roman": "times.ttf"
+                }
+                font_to_use = font_map.get(sub_font, "arialbd.ttf")
 
             try:
-                font = ImageFont.truetype(font_file, sub_size)
+                font = ImageFont.truetype(font_to_use, sub_size)
             except IOError:
                 try:
                     font = ImageFont.truetype("arial.ttf", sub_size)

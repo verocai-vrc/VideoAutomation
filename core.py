@@ -21,7 +21,7 @@ class ParceiroAutomacao:
     def planejar_timeline(self, audio_p, srt_p, imagens_info, transcribe_mode=False):
         return self.renderer.planejar_timeline(audio_p, srt_p, imagens_info, transcribe_mode)
 
-    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=None, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True, transcribe_mode=False, sub_font="Arial Bold", sub_color="yellow", sub_size=60, transition="Cut", sub_y=1300, visual_effect="None", custom_timeline=None):
+    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=None, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True, transcribe_mode=False, sub_font="Arial Bold", sub_font_file=None, sub_color="yellow", sub_size=60, transition="Cut", sub_y=1300, visual_effect="None", custom_timeline=None):
         from config import OUTPUT_DIR
         if output_dir is None: output_dir = OUTPUT_DIR
-        return self.renderer.criar_video_com_legendas(audio_p, srt_p, imagens_info, guiao, output_dir, bg_music_path, bg_volume, loop_bg, enable_narration, transcribe_mode, sub_font, sub_color, sub_size, transition, sub_y, visual_effect, custom_timeline)
+        return self.renderer.criar_video_com_legendas(audio_p, srt_p, imagens_info, guiao, output_dir, bg_music_path, bg_volume, loop_bg, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_size, transition, sub_y, visual_effect, custom_timeline)

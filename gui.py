@@ -43,6 +43,7 @@ class AutomacaoGUI:
         self.enable_narration_var = tk.BooleanVar(value=True)
         self.transcribe_mode_var = tk.BooleanVar(value=False)
         self.sub_font_var = tk.StringVar(value="Arial Bold")
+        self.sub_font_file_var = tk.StringVar(value="")
         self.sub_color_var = tk.StringVar(value="yellow")
         self.sub_size_var = tk.IntVar(value=60)
         self.sub_y_var = tk.IntVar(value=1300)
@@ -201,7 +202,8 @@ class AutomacaoGUI:
         tk.Label(col3, text="Subtitles Styling:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
         sub_frame = tk.Frame(col3, bg=panel_bg)
         sub_frame.pack(fill=tk.X, padx=10, pady=2)
-        ttk.Combobox(sub_frame, textvariable=self.sub_font_var, values=["Arial", "Arial Bold", "Impact", "Comic Sans", "Times New Roman"], state="readonly", width=12).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Combobox(sub_frame, textvariable=self.sub_font_var, values=["Arial", "Arial Bold", "Impact", "Comic Sans", "Times New Roman"], state="readonly", width=15).pack(side=tk.LEFT, padx=(0, 5))
+        tk.Button(sub_frame, text="...", command=self.browse_font, bg=btn_bg, fg=fg_color, width=3).pack(side=tk.LEFT, padx=(2,5))
         ttk.Combobox(sub_frame, textvariable=self.sub_color_var, values=["yellow", "white", "cyan", "green", "red", "magenta"], state="readonly", width=8).pack(side=tk.LEFT, padx=(0, 5))
         tk.Spinbox(sub_frame, from_=30, to=120, textvariable=self.sub_size_var, width=4, bg=entry_bg, fg=fg_color, buttonbackground=btn_bg).pack(side=tk.LEFT)
         
@@ -213,7 +215,7 @@ class AutomacaoGUI:
         self.preview_canvas = tk.Canvas(col3, width=162, height=288, bg="#000000", highlightthickness=2, highlightbackground="#555555")
         self.preview_canvas.pack(pady=(10, 0))
         
-        self.sub_font_var.trace_add("write", lambda *args: self.update_preview())
+        self.sub_font_var.trace_add("write", self.on_font_change)
         self.sub_color_var.trace_add("write", lambda *args: self.update_preview())
         self.sub_size_var.trace_add("write", lambda *args: self.update_preview())
         self.sub_y_var.trace_add("write", lambda *args: self.update_preview())
@@ -256,6 +258,23 @@ class AutomacaoGUI:
         self.prompt_text.config(state="disabled" if transcribe else "normal")
         self.model_cb.config(state="disabled" if transcribe else "readonly")
 
+    def on_font_change(self, *args):
+        presets = ["Arial", "Arial Bold", "Impact", "Comic Sans", "Times New Roman"]
+        if self.sub_font_var.get() in presets:
+            self.sub_font_file_var.set("")
+        self.update_preview()
+
+    def browse_font(self):
+        font_file = filedialog.askopenfilename(
+            title="Select Font File",
+            filetypes=[("Font Files", "*.ttf *.otf"), ("All files", "*.*")]
+        )
+        if font_file:
+            self.sub_font_file_var.set(font_file)
+            font_name = os.path.basename(font_file)
+            if len(font_name) > 20: font_name = font_name[:17] + "..."
+            self.sub_font_var.set(font_name)
+
     def update_preview(self, *args):
         try:
             sub_size = self.sub_size_var.get()
@@ -272,12 +291,15 @@ class AutomacaoGUI:
         # Draw a mock video border inside to simulate cellphone screen
         draw.rectangle([0, 0, preview_w, preview_h], outline=(80, 80, 80), width=10)
         
-        font_map = {"Arial": "arial.ttf", "Arial Bold": "arialbd.ttf", "Impact": "impact.ttf", "Comic Sans": "comic.ttf", "Times New Roman": "times.ttf"}
-        font_file = font_map.get(self.sub_font_var.get(), "arialbd.ttf")
+        font_file = self.sub_font_file_var.get()
+        if not font_file or not os.path.exists(font_file):
+            font_map = {"Arial": "arial.ttf", "Arial Bold": "arialbd.ttf", "Impact": "impact.ttf", "Comic Sans": "comic.ttf", "Times New Roman": "times.ttf"}
+            font_file = font_map.get(self.sub_font_var.get(), "arialbd.ttf")
+
         sub_color = self.sub_color_var.get()
         
         try: font = ImageFont.truetype(font_file, sub_size)
-        except: font = ImageFont.load_default()
+        except Exception: font = ImageFont.load_default()
             
         texto = "SAMPLE\nSUBTITLE"
         stroke_width = max(2, int(sub_size * 0.06))
@@ -425,6 +447,7 @@ class AutomacaoGUI:
         enable_narration = self.enable_narration_var.get()
         transcribe_mode = self.transcribe_mode_var.get()
         sub_font = self.sub_font_var.get()
+        sub_font_file = self.sub_font_file_var.get()
         sub_color = self.sub_color_var.get()
         sub_size = self.sub_size_var.get()
         transition = self.transition_var.get()
@@ -432,11 +455,11 @@ class AutomacaoGUI:
         visual_effect = self.visual_effect_var.get()
         
         # Use a background thread to prevent UI freezing
-        threading.Thread(target=self.run_automation_thread, args=(model, prompt, terms, out_dir, self.local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_color, sub_size, transition, sub_y, visual_effect), daemon=True).start()
+        threading.Thread(target=self.run_automation_thread, args=(model, prompt, terms, out_dir, self.local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_size, transition, sub_y, visual_effect), daemon=True).start()
         
-    def run_automation_thread(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_color, sub_size, transition, sub_y, visual_effect):
+    def run_automation_thread(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_size, transition, sub_y, visual_effect):
         try:
-            out_path = asyncio.run(self.async_workflow(model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_color, sub_size, transition, sub_y, visual_effect))
+            out_path = asyncio.run(self.async_workflow(model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_size, transition, sub_y, visual_effect))
             self.last_generated_media_path = out_path
             self.log(f"\n[*] DONE! Video saved to {out_path}")
             self.root.after(0, lambda: self.open_media_btn.config(state='normal'))
@@ -446,7 +469,7 @@ class AutomacaoGUI:
             self.is_generating = False
             self.root.after(0, lambda: self.btn.config(state='normal'))
             
-    async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_color, sub_size, transition, sub_y, visual_effect):
+    async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_size, transition, sub_y, visual_effect):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         base_name = f"projeto_{timestamp}"
         bot = ParceiroAutomacao(model=model, log_cb=self.log, progress_cb=self.update_progress)
@@ -627,6 +650,6 @@ class AutomacaoGUI:
             raise RuntimeError(f"Image Collection failed: {str(e)}")
                     
         try:
-            return bot.criar_video_com_legendas(audio_file, srt_file, imagens_info, guiao, output_dir=out_dir, bg_music_path=bg_music, bg_volume=bg_volume, loop_bg=loop_bg, enable_narration=enable_narration, transcribe_mode=transcribe_mode, sub_font=sub_font, sub_color=sub_color, sub_size=sub_size, transition=transition, sub_y=sub_y, visual_effect=visual_effect, custom_timeline=self.custom_timeline)
+            return bot.criar_video_com_legendas(audio_file, srt_file, imagens_info, guiao, output_dir=out_dir, bg_music_path=bg_music, bg_volume=bg_volume, loop_bg=loop_bg, enable_narration=enable_narration, transcribe_mode=transcribe_mode, sub_font=sub_font, sub_font_file=sub_font_file, sub_color=sub_color, sub_size=sub_size, transition=transition, sub_y=sub_y, visual_effect=visual_effect, custom_timeline=self.custom_timeline)
         except Exception as e:
             raise RuntimeError(f"Video Rendering (MoviePy) failed: {str(e)}")

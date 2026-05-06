@@ -39,3 +39,4 @@
 - [x] Subtitles get cropped by invisible bars when close to the video border: Lets add boundaries to make line breaks 
 - [x] when making a video with images, using the AI narration, subtitles arent visible
 - [x] the narration is including the time stamps and ruining user experience
+- [x] timeline editor window is blank, Cant edit the timeline or even tell the program to keep going without editing. Program gets softlocked waiting for response that cant be given

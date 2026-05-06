@@ -26,9 +26,10 @@ class TimelineEditor(tk.Frame):
         self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
         
-        self._drag_data = {"x": 0, "item": None, "group_tag": None}
+        self._drag_data = {"x": 0, "y": 0, "item": None, "group_tag": None}
         self.is_playing = False
         self._last_time = 0.0
+        self.selected_group_tag = None
         
         self.draw_ruler()
         self.draw_tracks(3)
@@ -42,8 +43,12 @@ class TimelineEditor(tk.Frame):
         # Bind drag and drop events to anything tagged as "draggable"
         self.canvas.tag_bind("draggable", "<ButtonPress-1>", self.on_drag_start)
         self.canvas.tag_bind("draggable", "<B1-Motion>", self.on_drag_motion)
+        self.canvas.tag_bind("draggable", "<ButtonRelease-1>", self.on_drag_release)
         self.canvas.tag_bind("draggable", "<Enter>", lambda e: self.canvas.config(cursor="hand2"))
         self.canvas.tag_bind("draggable", "<Leave>", lambda e: self.canvas.config(cursor=""))
+        
+        self.canvas.tag_bind("draggable", "<Button-3>", self.on_right_click_delete)
+        self.canvas.bind("<Delete>", self.on_delete_key)
         
         self.canvas.tag_bind("resize_left", "<ButtonPress-1>", self.on_drag_start)
         self.canvas.tag_bind("resize_left", "<B1-Motion>", self.on_resize_left_motion)
@@ -57,7 +62,7 @@ class TimelineEditor(tk.Frame):
         
     def draw_ruler(self):
         self.canvas.create_rectangle(0, 0, self.canvas_width, self.ruler_height, fill="#2b2b2b", outline="", tags="ruler")
-        for sec in range(self.duration + 1):
+        for sec in range(int(self.duration) + 1):
             x = sec * self.pixels_per_second
             # Major tick every 5 seconds, minor every 1 second
             if sec % 5 == 0:
@@ -104,9 +109,11 @@ class TimelineEditor(tk.Frame):
         
         group_tag = next((t for t in tags if t.startswith("clip_group_")), None)
         if group_tag:
+            self.selected_group_tag = group_tag
             self._drag_data["item"] = item
             self._drag_data["group_tag"] = group_tag
             self._drag_data["x"] = self.canvas.canvasx(event.x)
+            self._drag_data["y"] = self.canvas.canvasy(event.y)
             
             # Bring the dragged clip to the visual front
             for i in self.canvas.find_withtag(group_tag):
@@ -116,7 +123,9 @@ class TimelineEditor(tk.Frame):
         if not self._drag_data["group_tag"]: return
             
         canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
         delta_x = canvas_x - self._drag_data["x"]
+        delta_y = canvas_y - self._drag_data["y"]
         
         # Boundary constraint: don't let it go before 0 seconds
         rect_item = next((item for item in self.canvas.find_withtag(self._drag_data["group_tag"]) if "clip_rect" in self.canvas.gettags(item)), None)
@@ -126,10 +135,48 @@ class TimelineEditor(tk.Frame):
             if coords[0] + delta_x < 0:
                 delta_x = -coords[0] # Force X position exactly to 0
                 
-        self.canvas.move(self._drag_data["group_tag"], delta_x, 0)
+        self.canvas.move(self._drag_data["group_tag"], delta_x, delta_y)
         self._drag_data["x"] += delta_x
+        self._drag_data["y"] += delta_y
         self.canvas.tag_raise(self.playhead_id)
         
+    def on_drag_release(self, event):
+        if not self._drag_data["group_tag"]: return
+        
+        group_tag = self._drag_data["group_tag"]
+        rect_item = next((item for item in self.canvas.find_withtag(group_tag) if "clip_rect" in self.canvas.gettags(item)), None)
+        
+        if rect_item:
+            coords = self.canvas.coords(rect_item)
+            center_y = (coords[1] + coords[3]) / 2
+            
+            # Find closest track index (0, 1, or 2)
+            track_index = int((center_y - self.ruler_height) / self.track_height)
+            track_index = max(0, min(track_index, 2))
+            
+            # Snap clip to the nearest valid track
+            target_y1 = self.ruler_height + (track_index * self.track_height) + 20
+            delta_y = target_y1 - coords[1]
+            
+            if delta_y != 0:
+                self.canvas.move(group_tag, 0, delta_y)
+                
+        self._drag_data["group_tag"] = None
+
+    def on_right_click_delete(self, event):
+        item = self.canvas.find_withtag("current")[0]
+        tags = self.canvas.gettags(item)
+        group_tag = next((t for t in tags if t.startswith("clip_group_")), None)
+        if group_tag:
+            if self.selected_group_tag == group_tag:
+                self.selected_group_tag = None
+            self.canvas.delete(group_tag)
+
+    def on_delete_key(self, event):
+        if self.selected_group_tag:
+            self.canvas.delete(self.selected_group_tag)
+            self.selected_group_tag = None
+
     def on_resize_left_motion(self, event):
         if not self._drag_data["group_tag"]: return
         canvas_x = self.canvas.canvasx(event.x)
@@ -239,7 +286,7 @@ class TimelineEditor(tk.Frame):
                     duration = (coords[2] - coords[0]) / self.pixels_per_second
                     
                     y1 = coords[1]
-                    track_index = int((y1 - self.ruler_height - 20) / self.track_height)
+                    track_index = int(round((y1 - self.ruler_height - 20) / self.track_height))
                     
                     clips.append({
                         "id": clip_id,
