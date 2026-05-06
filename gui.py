@@ -3,7 +3,10 @@ import asyncio
 import threading
 import queue
 import requests
-from PIL import Image
+import datetime
+import platform
+import subprocess
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 import tkinter as tk
 from tkinter import scrolledtext, filedialog, ttk
 from duckduckgo_search import DDGS
@@ -37,11 +40,19 @@ class AutomacaoGUI:
         self.use_internet_search_var = tk.BooleanVar(value=True)
         self.enable_narration_var = tk.BooleanVar(value=True)
         self.transcribe_mode_var = tk.BooleanVar(value=False)
+        self.sub_font_var = tk.StringVar(value="Arial Bold")
+        self.sub_color_var = tk.StringVar(value="yellow")
+        self.sub_size_var = tk.IntVar(value=60)
+        self.sub_y_var = tk.IntVar(value=1300)
+        self.transition_var = tk.StringVar(value="Cut")
         self.terms_var = tk.StringVar(value="The simulation theory and our reality, matrix code, digital universe, abstract technology, future city")
         self.progress_var = tk.DoubleVar()
         self.is_generating = False
         self.spinner_states = ['|', '/', '-', '\\']
         self.spinner_idx = 0
+        self.script_approved_event = threading.Event()
+        self.approved_script = ""
+        self.last_generated_media_path = None
         
         # --- Main Layout ---
         top_frame = tk.Frame(root, bg=bg_color)
@@ -79,7 +90,8 @@ class AutomacaoGUI:
         self.prompt_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
         default_prompt = (
             "Write a detailed educational script for a 70-second video about 'The simulation theory and our reality'. "
-            "The script must be in English, engaging, and have at least 180 words. Return ONLY the spoken text."
+            "The script must be in English, engaging, and have at least 180 words. "
+            "Return ONLY the spoken text. DO NOT include timestamps, scene descriptions, speaker labels, or any formatting."
         )
         self.prompt_text.insert(tk.END, default_prompt)
         
@@ -106,6 +118,9 @@ class AutomacaoGUI:
         self.terms_entry = tk.Entry(col2, textvariable=self.terms_var, bg=entry_bg, fg=fg_color, insertbackground=fg_color)
         self.terms_entry.pack(fill=tk.X, padx=10, pady=(0, 10))
         
+        tk.Label(col2, text="Transition Effect:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
+        ttk.Combobox(col2, textvariable=self.transition_var, values=["Cut", "Fade In", "Fade Out", "Fade In & Out"], state="readonly").pack(fill=tk.X, padx=10, pady=(0, 10))
+        
         # --- Column 3: Audio & Output ---
         tk.Label(col3, text="Output Directory:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(10, 2))
         out_btn_frame = tk.Frame(col3, bg=panel_bg)
@@ -130,9 +145,36 @@ class AutomacaoGUI:
         
         tk.Checkbutton(col3, text="Loop Background Music", variable=self.loop_bg_var, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color).pack(anchor='w', padx=10, pady=10)
         
+        tk.Label(col3, text="Subtitles Styling:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
+        sub_frame = tk.Frame(col3, bg=panel_bg)
+        sub_frame.pack(fill=tk.X, padx=10, pady=2)
+        ttk.Combobox(sub_frame, textvariable=self.sub_font_var, values=["Arial", "Arial Bold", "Impact", "Comic Sans", "Times New Roman"], state="readonly", width=12).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Combobox(sub_frame, textvariable=self.sub_color_var, values=["yellow", "white", "cyan", "green", "red", "magenta"], state="readonly", width=8).pack(side=tk.LEFT, padx=(0, 5))
+        tk.Spinbox(sub_frame, from_=30, to=120, textvariable=self.sub_size_var, width=4, bg=entry_bg, fg=fg_color, buttonbackground=btn_bg).pack(side=tk.LEFT)
+        
+        y_frame = tk.Frame(col3, bg=panel_bg)
+        y_frame.pack(fill=tk.X, padx=10, pady=2)
+        tk.Label(y_frame, text="Subtitle Y-Position (0-1920):", bg=panel_bg, fg=fg_color, font=('Arial', 9)).pack(side=tk.LEFT)
+        tk.Spinbox(y_frame, from_=0, to=1920, textvariable=self.sub_y_var, width=5, bg=entry_bg, fg=fg_color, buttonbackground=btn_bg).pack(side=tk.LEFT, padx=5)
+        
+        self.preview_canvas = tk.Canvas(col3, width=162, height=288, bg="#000000", highlightthickness=2, highlightbackground="#555555")
+        self.preview_canvas.pack(pady=(10, 0))
+        
+        self.sub_font_var.trace_add("write", lambda *args: self.update_preview())
+        self.sub_color_var.trace_add("write", lambda *args: self.update_preview())
+        self.sub_size_var.trace_add("write", lambda *args: self.update_preview())
+        self.sub_y_var.trace_add("write", lambda *args: self.update_preview())
+        self.root.after(100, self.update_preview)
+        
         # --- Bottom Frame: Logs & Progress ---
-        self.btn = tk.Button(bottom_frame, text="GENERATE VIDEO", command=self.start_generation, bg="#4CAF50", fg="white", font=('Arial', 14, 'bold'), pady=10)
-        self.btn.pack(fill=tk.X, pady=(0, 10))
+        btn_container = tk.Frame(bottom_frame, bg=bg_color)
+        btn_container.pack(fill=tk.X, pady=(0, 10))
+        
+        self.btn = tk.Button(btn_container, text="GENERATE VIDEO", command=self.start_generation, bg="#4CAF50", fg="white", font=('Arial', 14, 'bold'), pady=10)
+        self.btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        self.open_media_btn = tk.Button(btn_container, text="OPEN LAST VIDEO", command=self.open_last_media, state="disabled", bg="#2196F3", fg="white", font=('Arial', 14, 'bold'), pady=10)
+        self.open_media_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(5, 0))
         
         progress_container = tk.Frame(bottom_frame, bg=bg_color)
         progress_container.pack(fill=tk.X, pady=5)
@@ -160,6 +202,66 @@ class AutomacaoGUI:
         self.terms_entry.config(state="normal" if (use_img and use_net and not transcribe) else "disabled")
         self.prompt_text.config(state="disabled" if transcribe else "normal")
         self.model_cb.config(state="disabled" if transcribe else "readonly")
+
+    def update_preview(self, *args):
+        try:
+            sub_size = self.sub_size_var.get()
+            sub_y = self.sub_y_var.get()
+        except tk.TclError:
+            return
+            
+        preview_w, preview_h = 1080, 1920
+        scale = 0.15 # 162x288
+        
+        img = Image.new('RGB', (preview_w, preview_h), (30, 30, 30))
+        draw = ImageDraw.Draw(img)
+        
+        # Draw a mock video border inside to simulate cellphone screen
+        draw.rectangle([0, 0, preview_w, preview_h], outline=(80, 80, 80), width=10)
+        
+        font_map = {"Arial": "arial.ttf", "Arial Bold": "arialbd.ttf", "Impact": "impact.ttf", "Comic Sans": "comic.ttf", "Times New Roman": "times.ttf"}
+        font_file = font_map.get(self.sub_font_var.get(), "arialbd.ttf")
+        sub_color = self.sub_color_var.get()
+        
+        try: font = ImageFont.truetype(font_file, sub_size)
+        except: font = ImageFont.load_default()
+            
+        texto = "SAMPLE\nSUBTITLE"
+        stroke_width = max(2, int(sub_size * 0.06))
+        
+        try:
+            bbox = draw.multiline_textbbox((0, 0), texto, font=font, align='center')
+            text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except AttributeError:
+            text_w, text_h = draw.textsize(texto, font=font)
+            
+        x, y = (preview_w - text_w) / 2, sub_y
+        
+        for ox in range(-stroke_width, stroke_width + 1):
+            for oy in range(-stroke_width, stroke_width + 1):
+                if ox == 0 and oy == 0: continue
+                try: draw.multiline_text((x + ox, y + oy), texto, font=font, fill='black', align='center')
+                except AttributeError: draw.text((x + ox, y + oy), texto, font=font, fill='black')
+                
+        try: draw.multiline_text((x, y), texto, font=font, fill=sub_color, align='center')
+        except AttributeError: draw.text((x, y), texto, font=font, fill=sub_color)
+        
+        img_resized = img.resize((int(preview_w * scale), int(preview_h * scale)), Image.LANCZOS)
+        self.preview_tk = ImageTk.PhotoImage(img_resized)
+        self.preview_canvas.delete("all")
+        self.preview_canvas.create_image(0, 0, anchor=tk.NW, image=self.preview_tk)
+
+    def open_last_media(self):
+        if self.last_generated_media_path and os.path.exists(self.last_generated_media_path):
+            try:
+                if platform.system() == "Windows":
+                    os.startfile(self.last_generated_media_path)
+                elif platform.system() == "Darwin":
+                    subprocess.call(["open", self.last_generated_media_path])
+                else:
+                    subprocess.call(["xdg-open", self.last_generated_media_path])
+            except Exception as e:
+                self.log(f"[!] Could not open media: {e}")
 
     def browse_dir(self):
         directory = filedialog.askdirectory(initialdir=self.out_dir_var.get())
@@ -214,6 +316,7 @@ class AutomacaoGUI:
 
     def start_generation(self):
         self.btn.config(state='disabled')
+        self.open_media_btn.config(state='disabled')
         self.log_area.config(state='normal')
         self.log_area.delete(1.0, tk.END)
         self.log_area.config(state='disabled')
@@ -235,21 +338,30 @@ class AutomacaoGUI:
         num_images = self.num_images_var.get()
         enable_narration = self.enable_narration_var.get()
         transcribe_mode = self.transcribe_mode_var.get()
+        sub_font = self.sub_font_var.get()
+        sub_color = self.sub_color_var.get()
+        sub_size = self.sub_size_var.get()
+        transition = self.transition_var.get()
+        sub_y = self.sub_y_var.get()
         
         # Use a background thread to prevent UI freezing
-        threading.Thread(target=self.run_automation_thread, args=(model, prompt, terms, out_dir, self.local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode), daemon=True).start()
+        threading.Thread(target=self.run_automation_thread, args=(model, prompt, terms, out_dir, self.local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_color, sub_size, transition, sub_y), daemon=True).start()
         
-    def run_automation_thread(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode):
+    def run_automation_thread(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_color, sub_size, transition, sub_y):
         try:
-            asyncio.run(self.async_workflow(model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode))
-            self.log(f"\n[*] DONE! Video saved to {os.path.join(out_dir, 'video_legendado.mp4')}")
+            out_path = asyncio.run(self.async_workflow(model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_color, sub_size, transition, sub_y))
+            self.last_generated_media_path = out_path
+            self.log(f"\n[*] DONE! Video saved to {out_path}")
+            self.root.after(0, lambda: self.open_media_btn.config(state='normal'))
         except Exception as e:
             self.log(f"\n[!] Error: {str(e)}")
         finally:
             self.is_generating = False
             self.root.after(0, lambda: self.btn.config(state='normal'))
             
-    async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode):
+    async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_color, sub_size, transition, sub_y):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = f"projeto_{timestamp}"
         bot = ParceiroAutomacao(model=model, log_cb=self.log, progress_cb=self.update_progress)
         
         try:
@@ -257,12 +369,58 @@ class AutomacaoGUI:
                 video_path = next((p for p in local_imgs if p.lower().endswith(('.mp4', '.mov', '.avi', '.webm'))), None)
                 if not video_path:
                     raise RuntimeError("Modo 'Transcribe Video' ativo, mas nenhum vídeo selecionado em Local Media!")
-                srt_file = bot.transcrever_video(video_path, "projeto_v1")
+                srt_file = bot.transcrever_video(video_path, base_name)
                 audio_file = video_path # MoviePy extracts audio automatically
                 guiao = ""
             else:
                 guiao = bot.gerar_guiao(prompt)
-                audio_file, srt_file = await bot.gerar_audio_e_legendas(guiao, "projeto_v1")
+                
+                self.script_approved_event.clear()
+                self.approved_script = ""
+                
+                def show_review_window():
+                    review_win = tk.Toplevel(self.root)
+                    review_win.title("Review Generated Script")
+                    review_win.geometry("800x600")
+                    review_win.configure(bg="#2b2b2b")
+                    review_win.transient(self.root)
+                    review_win.grab_set()
+                    
+                    tk.Label(review_win, text="Review and Edit the Generated Script:", font=('Arial', 12, 'bold'), bg="#2b2b2b", fg="#ffffff").pack(pady=10)
+                    
+                    text_area = scrolledtext.ScrolledText(review_win, wrap=tk.WORD, bg="#3b3b3b", fg="#ffffff", insertbackground="#ffffff", font=('Arial', 11))
+                    text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+                    text_area.insert(tk.END, guiao)
+                    
+                    def approve():
+                        self.approved_script = text_area.get(1.0, tk.END).strip()
+                        review_win.destroy()
+                        self.script_approved_event.set()
+                        
+                    def on_close():
+                        review_win.destroy()
+                        self.approved_script = ""
+                        self.script_approved_event.set()
+                        
+                    btn_frame = tk.Frame(review_win, bg="#2b2b2b")
+                    btn_frame.pack(fill=tk.X, pady=10)
+                    
+                    tk.Button(btn_frame, text="Approve & Continue", command=approve, bg="#4CAF50", fg="white", font=('Arial', 12, 'bold'), padx=20).pack(side=tk.RIGHT, padx=10)
+                    tk.Button(btn_frame, text="Cancel", command=on_close, bg="#f44336", fg="white", font=('Arial', 12, 'bold'), padx=20).pack(side=tk.RIGHT)
+                    
+                    review_win.protocol("WM_DELETE_WINDOW", on_close)
+
+                self.root.after(0, show_review_window)
+                
+                while not self.script_approved_event.is_set():
+                    await asyncio.sleep(0.5)
+                    
+                if not self.approved_script:
+                    raise RuntimeError("Script review cancelled by user.")
+                    
+                guiao = self.approved_script
+                
+                audio_file, srt_file = await bot.gerar_audio_e_legendas(guiao, base_name)
         except Exception as e:
             raise RuntimeError(f"Geração de Script/Áudio falhou: {str(e)}")
         
@@ -373,6 +531,6 @@ class AutomacaoGUI:
             raise RuntimeError(f"Image Collection failed: {str(e)}")
                     
         try:
-            bot.criar_video_com_legendas(audio_file, srt_file, imagens_info, guiao, output_dir=out_dir, bg_music_path=bg_music, bg_volume=bg_volume, loop_bg=loop_bg, enable_narration=enable_narration, transcribe_mode=transcribe_mode)
+            return bot.criar_video_com_legendas(audio_file, srt_file, imagens_info, guiao, output_dir=out_dir, bg_music_path=bg_music, bg_volume=bg_volume, loop_bg=loop_bg, enable_narration=enable_narration, transcribe_mode=transcribe_mode, sub_font=sub_font, sub_color=sub_color, sub_size=sub_size, transition=transition, sub_y=sub_y)
         except Exception as e:
             raise RuntimeError(f"Video Rendering (MoviePy) failed: {str(e)}")

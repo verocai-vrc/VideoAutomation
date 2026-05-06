@@ -2,14 +2,19 @@ import os
 import pysubs2
 
 def run_subtitle_test():
+    import glob
     assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-    srt_path = os.path.join(assets_dir, "projeto_v1.srt")
+    
+    # Find the most recently created .srt file
+    srt_files = glob.glob(os.path.join(assets_dir, "*.srt"))
+    if not srt_files:
+        print("[!] Error: No .srt files found. Run the main generator first.")
+        return
+        
+    srt_path = max(srt_files, key=os.path.getctime)
     debug_out = os.path.join(assets_dir, "debug_subtitles.txt")
     
     print(f"--- Running Subtitle Test on: {srt_path} ---")
-    if not os.path.exists(srt_path):
-        print(f"[!] Error: {srt_path} not found. Run the main generator first.")
-        return
 
     try:
         subs = pysubs2.load(srt_path, encoding="utf-8")
@@ -25,7 +30,7 @@ def run_subtitle_test():
         current_line_text = ""
         line_start_time = subs[0].start
         last_word_end_time = subs[0].end
-        max_chars_per_line = 35
+        max_chars_per_line = 60
 
         for event in subs:
             if len(current_line_text) + len(event.text) + 1 > max_chars_per_line and current_line_text:

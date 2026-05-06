@@ -55,7 +55,18 @@ class ParceiroAutomacao:
         payload = {"model": self.model, "prompt": prompt, "stream": False}
         response = requests.post(OLLAMA_API_URL, json=payload)
         response.raise_for_status()
-        return response.json()['response'].strip()
+        texto = response.json()['response'].strip()
+        
+        # Remover timestamps (ex: 00:00, 00:00:00) e descrições indesejadas
+        texto = re.sub(r'\[?\b\d{1,2}:\d{2}(:\d{2})?\b\]?', '', texto)
+        # Remover marcações de cena tipo (Visuals: ...) ou [Scene: ...]
+        texto = re.sub(r'\(.*?\)', '', texto)
+        texto = re.sub(r'\[.*?\]', '', texto)
+        # Remover labels de speaker
+        texto = re.sub(r'\b(Speaker\s*\d+|Narrator|Host|Voiceover|AI):\s*', '', texto, flags=re.IGNORECASE)
+        texto = re.sub(r'\n+', '\n', texto)
+        
+        return re.sub(r'[ \t]+', ' ', texto).strip()
 
     async def gerar_audio_e_legendas(self, texto, base_name):
         """
@@ -159,7 +170,7 @@ class ParceiroAutomacao:
         self.log(f"[V] Transcrição concluída com sucesso em {ASSETS_DIR}")
         return subs_path
 
-    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=OUTPUT_DIR, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True, transcribe_mode=False):
+    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=OUTPUT_DIR, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True, transcribe_mode=False, sub_font="Arial Bold", sub_color="yellow", sub_size=60, transition="Cut", sub_y=1300):
         """Monta o vídeo final com imagens sincronizadas ao guião e legendas queimadas."""
         self.log("[*] A planear cronologia das imagens e a renderizar vídeo...")
         if not os.path.exists(output_dir): os.makedirs(output_dir)
@@ -191,13 +202,12 @@ class ParceiroAutomacao:
                 clip = VideoFileClip(path)
                 if clip.duration < dur:
                     repeats = int(dur // clip.duration) + 1
-                    clip = concatenate_videoclips([clip] * repeats, method="compose")
+                    clip = concatenate_videoclips([clip] * repeats, method="chain")
                     if hasattr(clip, 'subclipped'):
                         clip = clip.subclipped(0, dur)
                     else:
                         clip = clip.subclip(0, dur)
                 clip = fit_to_vertical(clip)
-                return clip
             else:
                 clip = ImageClip(np.array(Image.open(path).convert('RGB')))
                 if hasattr(clip, 'with_duration'):
@@ -205,7 +215,33 @@ class ParceiroAutomacao:
                 else:
                     clip = clip.set_duration(dur)
                 clip = fit_to_vertical(clip)
-                return clip
+                
+            effect_dur = min(0.5, dur / 2.0) if dur > 0 else 0.5
+            is_v2 = hasattr(clip, 'with_effects')
+            
+            try:
+                if is_v2:
+                    from moviepy.video.fx.FadeIn import FadeIn
+                    from moviepy.video.fx.FadeOut import FadeOut
+                    if transition == "Fade In": clip = clip.with_effects([FadeIn(effect_dur)])
+                    elif transition == "Fade Out": clip = clip.with_effects([FadeOut(effect_dur)])
+                    elif transition == "Fade In & Out": clip = clip.with_effects([FadeIn(effect_dur), FadeOut(effect_dur)])
+                else:
+                    def fx_fadein(c, d):
+                        d = max(0.001, d)
+                        return c.fl(lambda gf, t: (np.clip(t / d, 0.0, 1.0) * gf(t)).astype(np.uint8))
+                    def fx_fadeout(c, d):
+                        d = max(0.001, d)
+                        dur_val = c.duration if c.duration is not None else dur
+                        return c.fl(lambda gf, t: (np.clip((dur_val - t) / d, 0.0, 1.0) * gf(t)).astype(np.uint8))
+                    
+                    if transition == "Fade In": clip = fx_fadein(clip, effect_dur)
+                    elif transition == "Fade Out": clip = fx_fadeout(clip, effect_dur)
+                    elif transition == "Fade In & Out": clip = fx_fadeout(fx_fadein(clip, effect_dur), effect_dur)
+            except Exception as e:
+                self.log(f"[!] Aviso ao aplicar transição {transition}: {e}")
+                
+            return clip
 
         # 1. Carregar legendas primeiro para ter tempos precisos
         try:
@@ -274,7 +310,7 @@ class ParceiroAutomacao:
                     if dur > 0:
                         img_clips.append(get_media_clip(paths[i], dur))
 
-            video_base = concatenate_videoclips(img_clips, method="compose")
+        video_base = concatenate_videoclips(img_clips, method="chain")
 
         duracao_final = video_base.duration if hasattr(video_base, 'duration') and video_base.duration else duracao_planeada
 
@@ -320,36 +356,58 @@ class ParceiroAutomacao:
         subtitle_clips = []
         
         def criar_legenda_pil(texto):
-            largura, altura = 900, 150
+            import textwrap
+            largura, altura = 1040, 500
             img = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
             
+            font_map = {
+                "Arial": "arial.ttf",
+                "Arial Bold": "arialbd.ttf",
+                "Impact": "impact.ttf",
+                "Comic Sans": "comic.ttf",
+                "Times New Roman": "times.ttf"
+            }
+            font_file = font_map.get(sub_font, "arialbd.ttf")
+
             try:
-                # Tentar usar Arial Bold padrão do Windows
-                font = ImageFont.truetype("arialbd.ttf", 60)
+                font = ImageFont.truetype(font_file, sub_size)
             except IOError:
                 try:
-                    font = ImageFont.truetype("arial.ttf", 60)
+                    font = ImageFont.truetype("arial.ttf", sub_size)
                 except IOError:
                     font = ImageFont.load_default()
                     
+            # Auto-wrap text based on estimated character width vs box width
+            char_width = max(10, sub_size * 0.55)
+            max_chars = max(15, int(900 / char_width))
+            wrapped_text = "\n".join(textwrap.wrap(texto, width=max_chars))
+
             try:
-                bbox = draw.textbbox((0, 0), texto, font=font)
+                bbox = draw.multiline_textbbox((0, 0), wrapped_text, font=font, align='center')
                 text_w = bbox[2] - bbox[0]
                 text_h = bbox[3] - bbox[1]
             except AttributeError:
-                text_w, text_h = draw.textsize(texto, font=font)
+                text_w, text_h = draw.textsize(wrapped_text, font=font)
                 
             x = (largura - text_w) / 2
             y = (altura - text_h) / 2
             
             # Desenhar o contorno (stroke)
-            for ox in [-2, 0, 2]:
-                for oy in [-2, 0, 2]:
-                    draw.text((x + ox, y + oy), texto, font=font, fill='black')
+            stroke_width = max(2, int(sub_size * 0.06))
+            for ox in range(-stroke_width, stroke_width + 1):
+                for oy in range(-stroke_width, stroke_width + 1):
+                    if ox == 0 and oy == 0: continue
+                    try:
+                        draw.multiline_text((x + ox, y + oy), wrapped_text, font=font, fill='black', align='center')
+                    except AttributeError:
+                        draw.text((x + ox, y + oy), wrapped_text, font=font, fill='black')
                     
             # Desenhar o texto principal
-            draw.text((x, y), texto, font=font, fill='yellow')
+            try:
+                draw.multiline_text((x, y), wrapped_text, font=font, fill=sub_color, align='center')
+            except AttributeError:
+                draw.text((x, y), wrapped_text, font=font, fill=sub_color)
             
             img_np = np.array(img)
             rgb = img_np[:, :, :3]
@@ -373,7 +431,7 @@ class ParceiroAutomacao:
             current_line_text = ""
             line_start_time = subs[0].start
             last_word_end_time = subs[0].end
-            max_chars_per_line = 35  # Adjust as needed for aesthetics
+            max_chars_per_line = 60  # PIL will smartly wrap the lines inside the box bounds
 
             for event in subs:
                 # If adding the new word exceeds the line limit, and the line isn't empty
@@ -405,9 +463,9 @@ class ParceiroAutomacao:
             
             clip_sub = criar_legenda_pil(line['text'])
             if hasattr(clip_sub, 'with_start'):
-                txt = clip_sub.with_start(start).with_duration(duration).with_position(('center', 1400))
+                txt = clip_sub.with_start(start).with_duration(duration).with_position(('center', sub_y))
             else:
-                txt = clip_sub.set_start(start).set_duration(duration).set_position(('center', 1400))
+                txt = clip_sub.set_start(start).set_duration(duration).set_position(('center', sub_y))
             subtitle_clips.append(txt)
 
         # 4. Sobrepor tudo
@@ -417,7 +475,8 @@ class ParceiroAutomacao:
         else:
             video_final = video_final.set_duration(duracao_final)
             
-        out = os.path.join(output_dir, "video_legendado.mp4")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        out = os.path.join(output_dir, f"video_legendado_{timestamp}.mp4")
         logger = UIProgressLogger(self.progress_cb) if UIProgressLogger and self.progress_cb else "bar"
         video_final.write_videofile(out, fps=24, codec="libx264", audio_codec="aac", logger=logger)
         return out
