@@ -9,9 +9,11 @@ import subprocess
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import tkinter as tk
 from tkinter import scrolledtext, filedialog, ttk
-from duckduckgo_search import DDGS
 from config import OLLAMA_API_URL, OUTPUT_DIR, ASSETS_DIR
 from core import ParceiroAutomacao
+from timeline import TimelineEditor
+from core.web_scraper import WebScraper
+from ui.dialogs import show_script_review, show_image_review
 
 class AutomacaoGUI:
     def __init__(self, root):
@@ -59,11 +61,50 @@ class AutomacaoGUI:
         self.images_cancelled = False
         self.last_generated_media_path = None
         
-        # --- Main Layout ---
-        top_frame = tk.Frame(root, bg=bg_color)
+        # --- Main Scrollable Layout ---
+        self.main_canvas = tk.Canvas(root, bg=bg_color, highlightthickness=0)
+        self.main_scrollbar = ttk.Scrollbar(root, orient="vertical", command=self.main_canvas.yview)
+        self.scrollable_main_frame = tk.Frame(self.main_canvas, bg=bg_color)
+        
+        self.scrollable_main_frame.bind(
+            "<Configure>",
+            lambda e: self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+        )
+        
+        self.canvas_window = self.main_canvas.create_window((0, 0), window=self.scrollable_main_frame, anchor="nw")
+        
+        self.main_canvas.bind(
+            "<Configure>",
+            lambda e: self.main_canvas.itemconfig(self.canvas_window, width=e.width)
+        )
+        
+        self.main_canvas.configure(yscrollcommand=self.main_scrollbar.set)
+        self.main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.main_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        def _on_mousewheel(event):
+            # Prevent double-scrolling if hovering over independent scrollable widgets
+            if isinstance(event.widget, (tk.Text, tk.Spinbox, ttk.Combobox)):
+                return
+            if platform.system() == "Windows":
+                self.main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            elif platform.system() == "Darwin":
+                self.main_canvas.yview_scroll(int(-1*event.delta), "units")
+            else:
+                if event.num == 4: self.main_canvas.yview_scroll(-1, "units")
+                elif event.num == 5: self.main_canvas.yview_scroll(1, "units")
+
+        if platform.system() == "Linux":
+            self.root.bind_all("<Button-4>", _on_mousewheel)
+            self.root.bind_all("<Button-5>", _on_mousewheel)
+        else:
+            self.root.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # --- Top and Bottom Frames ---
+        top_frame = tk.Frame(self.scrollable_main_frame, bg=bg_color)
         top_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        bottom_frame = tk.Frame(root, bg=bg_color)
+        bottom_frame = tk.Frame(self.scrollable_main_frame, bg=bg_color)
         bottom_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
         
         # --- Columns ---
@@ -275,36 +316,6 @@ class AutomacaoGUI:
             except Exception as e:
                 self.log(f"[!] Could not open media: {e}")
 
-    def fallback_image_search(self, term, limit=5):
-        try:
-            url = "https://commons.wikimedia.org/w/api.php"
-            params = {
-                "action": "query",
-                "format": "json",
-                "generator": "search",
-                "gsrnamespace": 6, # File namespace
-                "gsrsearch": term,
-                "gsrlimit": limit,
-                "prop": "imageinfo",
-                "iiprop": "url"
-            }
-            headers = {"User-Agent": "VideoMaekar/1.0"}
-            resp = requests.get(url, params=params, headers=headers, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            pages = data.get("query", {}).get("pages", {})
-            results = []
-            for page_id, page_info in pages.items():
-                imageinfo = page_info.get("imageinfo", [])
-                if imageinfo and "url" in imageinfo[0]:
-                    img_url = imageinfo[0]["url"]
-                    if img_url.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
-                        results.append({"image": img_url})
-            return results
-        except Exception as e:
-            self.log(f"  [!] Fallback Wikimedia falhou: {e}")
-            return []
-
     def browse_dir(self):
         directory = filedialog.askdirectory(initialdir=self.out_dir_var.get())
         if directory:
@@ -454,39 +465,15 @@ class AutomacaoGUI:
                 self.script_approved_event.clear()
                 self.approved_script = ""
                 
-                def show_review_window():
-                    review_win = tk.Toplevel(self.root)
-                    review_win.title("Review Generated Script")
-                    review_win.geometry("800x600")
-                    review_win.configure(bg="#2b2b2b")
-                    review_win.transient(self.root)
-                    review_win.grab_set()
+                def on_script_approve(edited_script):
+                    self.approved_script = edited_script
+                    self.script_approved_event.set()
                     
-                    tk.Label(review_win, text="Review and Edit the Generated Script:", font=('Arial', 12, 'bold'), bg="#2b2b2b", fg="#ffffff").pack(pady=10)
-                    
-                    text_area = scrolledtext.ScrolledText(review_win, wrap=tk.WORD, bg="#3b3b3b", fg="#ffffff", insertbackground="#ffffff", font=('Arial', 11))
-                    text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-                    text_area.insert(tk.END, guiao)
-                    
-                    def approve():
-                        self.approved_script = text_area.get(1.0, tk.END).strip()
-                        review_win.destroy()
-                        self.script_approved_event.set()
-                        
-                    def on_close():
-                        review_win.destroy()
-                        self.approved_script = ""
-                        self.script_approved_event.set()
-                        
-                    btn_frame = tk.Frame(review_win, bg="#2b2b2b")
-                    btn_frame.pack(fill=tk.X, pady=10)
-                    
-                    tk.Button(btn_frame, text="Approve & Continue", command=approve, bg="#4CAF50", fg="white", font=('Arial', 12, 'bold'), padx=20).pack(side=tk.RIGHT, padx=10)
-                    tk.Button(btn_frame, text="Cancel", command=on_close, bg="#f44336", fg="white", font=('Arial', 12, 'bold'), padx=20).pack(side=tk.RIGHT)
-                    
-                    review_win.protocol("WM_DELETE_WINDOW", on_close)
+                def on_script_cancel():
+                    self.approved_script = ""
+                    self.script_approved_event.set()
 
-                self.root.after(0, show_review_window)
+                self.root.after(0, lambda: show_script_review(self.root, guiao, on_script_approve, on_script_cancel))
                 
                 while not self.script_approved_event.is_set():
                     await asyncio.sleep(0.5)
@@ -539,71 +526,9 @@ class AutomacaoGUI:
         
                     # 2. Processar imagens DuckDuckGo
                     if use_images and terms and use_internet and local_image_count < num_images:
-                        self.log("[*] A descarregar imagens do DuckDuckGo...")
-                        with DDGS() as ddgs:
-                            for i, t in enumerate(terms):
-                                if local_image_count >= num_images:
-                                    break
-                                    
-                                remaining_terms = len(terms) - i
-                                remaining_images = num_images - local_image_count
-                                target_for_term = (remaining_images + remaining_terms - 1) // remaining_terms
-                                
-                                self.log(f"  -> A pesquisar: {t} (A tentar descarregar {target_for_term} imagens)")
-                                if i > 0: await asyncio.sleep(2)
-                                
-                                res = []
-                                for attempt in range(3):
-                                    try:
-                                        res = list(ddgs.images(t, max_results=target_for_term * 3, safesearch="on"))
-                                        break
-                                    except Exception as e:
-                                        if "403" in str(e) or "Ratelimit" in str(e):
-                                            if attempt < 2:
-                                                wait_t = 5 * (attempt + 1)
-                                                self.log(f"  [!] Rate limit. A aguardar {wait_t}s (tentativa {attempt+1}/3)...")
-                                                await asyncio.sleep(wait_t)
-                                            else:
-                                                self.log(f"  [!] Falha contínua no DuckDuckGo para '{t}'. A usar alternativa (Wikimedia)...")
-                                                res = self.fallback_image_search(t, target_for_term * 5)
-                                                break
-                                        else:
-                                            self.log(f"  [!] Erro na pesquisa '{t}': {str(e)}. A usar alternativa (Wikimedia)...")
-                                            res = self.fallback_image_search(t, target_for_term * 5)
-                                            break
-                                        
-                                if res:
-                                    downloaded_for_term = 0
-                                    for img_data in res:
-                                        if local_image_count >= num_images or downloaded_for_term >= target_for_term:
-                                            break
-                                        try:
-                                            path = os.path.join(ASSETS_DIR, f"img_ddg_{local_image_count}.jpg")
-                                            response = requests.get(img_data['image'], timeout=10)
-                                            response.raise_for_status() # Check for 403 or 404 HTTP errors
-                                            
-                                            with open(path, 'wb') as f: f.write(response.content)
-                                            
-                                            # Verify if the downloaded file is a valid image
-                                            with Image.open(path) as img:
-                                                img.verify()
-                                                
-                                            # Reopen to ensure it is in a standard RGB format (fixes WEBP/RGBA issues)
-                                            with Image.open(path) as img:
-                                                img.load() # Force load pixel data
-                                                if img.mode != 'RGB':
-                                                    rgb_img = img.convert('RGB')
-                                                else:
-                                                    rgb_img = img.copy()
-                                                    
-                                            # Force save as JPEG unconditionally to correct fake .jpg extensions
-                                            rgb_img.save(path, 'JPEG')
-                                                    
-                                            imagens_info.append({'path': path, 'keyword': t})
-                                            downloaded_for_term += 1
-                                            local_image_count += 1
-                                        except Exception as e:
-                                            self.log(f"  [!] Link falhou ({str(e)[:30]}...). A tentar outra...")
+                        scraper = WebScraper(log_cb=self.log)
+                        ddg_images, local_image_count = await scraper.scrape_images(terms, num_images, local_image_count, ASSETS_DIR)
+                        imagens_info.extend(ddg_images)
                                 
                 if not imagens_info:
                     self.log("[!] No media provided/found. Rendering video with black background.")
@@ -614,107 +539,29 @@ class AutomacaoGUI:
                 self.images_cancelled = False
                 self.new_search_terms = ", ".join(terms)
                 
-                def show_image_review():
-                    review_win = tk.Toplevel(self.root)
-                    review_win.title("Review Loaded Images")
-                    review_win.geometry("900x700")
-                    review_win.configure(bg="#2b2b2b")
-                    review_win.transient(self.root)
-                    review_win.grab_set()
+                def on_image_approve():
+                    self.images_retry = False
+                    self.images_approved_event.set()
                     
-                    tk.Label(review_win, text="Review Loaded Images:", font=('Arial', 12, 'bold'), bg="#2b2b2b", fg="#ffffff").pack(pady=10)
+                def on_image_retry(new_terms):
+                    self.new_search_terms = new_terms
+                    self.images_retry = True
+                    self.images_approved_event.set()
                     
-                    canvas = tk.Canvas(review_win, bg="#3b3b3b", highlightthickness=0)
-                    scrollbar = ttk.Scrollbar(review_win, orient="vertical", command=canvas.yview)
-                    scrollable_frame = tk.Frame(canvas, bg="#3b3b3b")
-                    
-                    scrollable_frame.bind(
-                        "<Configure>",
-                        lambda e: canvas.configure(
-                            scrollregion=canvas.bbox("all")
-                        )
-                    )
-                    
-                    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-                    canvas.configure(yscrollcommand=scrollbar.set)
-                    
-                    canvas.pack(side="top", fill="both", expand=True, padx=10, pady=5)
-                    scrollbar.pack(side="right", fill="y")
-                    
-                    self.review_photos = []
-                    row, col = 0, 0
-                    max_cols = 4
-                    for info in imagens_info:
-                        try:
-                            if info['path'].lower().endswith(('.mp4', '.mov', '.avi', '.webm')):
-                                img = Image.new('RGB', (200, 200), (80, 80, 80))
-                                draw = ImageDraw.Draw(img)
-                                draw.polygon([(80, 60), (80, 140), (140, 100)], fill="white")
-                            else:
-                                with Image.open(info['path']) as img_file:
-                                    if img_file.mode != 'RGB':
-                                        img_file = img_file.convert('RGB')
-                                    img = img_file.copy()
-                                img.thumbnail((200, 200), Image.LANCZOS)
-                                bg = Image.new('RGB', (200, 200), (59, 59, 59))
-                                offset_x = (200 - img.width) // 2
-                                offset_y = (200 - img.height) // 2
-                                bg.paste(img, (offset_x, offset_y))
-                                img = bg
-                                
-                            photo = ImageTk.PhotoImage(img)
-                            self.review_photos.append(photo)
-                            
-                            frame = tk.Frame(scrollable_frame, bg="#3b3b3b")
-                            frame.grid(row=row, column=col, padx=10, pady=10)
-                            
-                            tk.Label(frame, image=photo, bg="#3b3b3b", bd=1, relief="solid").pack()
-                            kw_text = info['keyword']
-                            if len(kw_text) > 25: kw_text = kw_text[:22] + "..."
-                            tk.Label(frame, text=kw_text, bg="#3b3b3b", fg="#ffffff").pack(pady=(5, 0))
-                            
-                            col += 1
-                            if col >= max_cols:
-                                col = 0
-                                row += 1
-                        except Exception as e:
-                            self.log(f"[!] Error loading preview for {info['path']}: {e}")
-                            
-                    bottom_panel = tk.Frame(review_win, bg="#2b2b2b")
-                    bottom_panel.pack(fill=tk.X, pady=10, padx=10)
-                    
-                    tk.Label(bottom_panel, text="Search Terms:", bg="#2b2b2b", fg="#ffffff", font=('Arial', 10, 'bold')).pack(side=tk.LEFT)
-                    terms_entry = tk.Entry(bottom_panel, bg="#3b3b3b", fg="#ffffff", width=40, insertbackground="#ffffff")
-                    terms_entry.pack(side=tk.LEFT, padx=10)
-                    terms_entry.insert(0, self.new_search_terms)
-                    
-                    def cleanup():
-                        self.review_photos.clear()
-                        review_win.destroy()
+                def on_image_cancel():
+                    self.images_retry = False
+                    self.images_cancelled = True
+                    self.images_approved_event.set()
 
-                    def approve():
-                        self.images_retry = False
-                        cleanup()
-                        self.images_approved_event.set()
-                        
-                    def retry():
-                        self.new_search_terms = terms_entry.get()
-                        self.images_retry = True
-                        cleanup()
-                        self.images_approved_event.set()
-                        
-                    def on_close():
-                        self.images_retry = False
-                        self.images_cancelled = True
-                        cleanup()
-                        self.images_approved_event.set()
-                        
-                    tk.Button(bottom_panel, text="Approve & Continue", command=approve, bg="#4CAF50", fg="white", font=('Arial', 10, 'bold'), padx=15).pack(side=tk.RIGHT, padx=5)
-                    tk.Button(bottom_panel, text="Retry Search", command=retry, bg="#FF9800", fg="white", font=('Arial', 10, 'bold'), padx=15).pack(side=tk.RIGHT, padx=5)
-                    
-                    review_win.protocol("WM_DELETE_WINDOW", on_close)
-
-                self.root.after(0, show_image_review)
+                self.root.after(0, lambda: show_image_review(
+                    self.root, 
+                    imagens_info, 
+                    self.new_search_terms, 
+                    on_image_approve, 
+                    on_image_retry, 
+                    on_image_cancel, 
+                    self.log
+                ))
                 
                 while not self.images_approved_event.is_set():
                     await asyncio.sleep(0.5)
@@ -728,11 +575,58 @@ class AutomacaoGUI:
                     self.log("[*] Retrying image search with new terms...")
                     continue
                 else:
+                    duration, planned_clips = bot.planejar_timeline(audio_file, srt_file, imagens_info, transcribe_mode)
+                    
+                    self.timeline_approved_event = threading.Event()
+                    self.custom_timeline = []
+                    
+                    def show_timeline_window():
+                        timeline_win = tk.Toplevel(self.root)
+                        timeline_win.title("Timeline Editor")
+                        timeline_win.geometry("1000x550")
+                        timeline_win.configure(bg="#2b2b2b")
+                        timeline_win.transient(self.root)
+                        timeline_win.grab_set()
+                        
+                        tk.Label(timeline_win, text="Adjust Media Timings (Drag to move, edges to resize):", font=('Arial', 12, 'bold'), bg="#2b2b2b", fg="#ffffff").pack(pady=10)
+                        
+                        editor = TimelineEditor(timeline_win, duration=duration)
+                        editor.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+                        
+                        editor.add_clip(0, 0, duration, "#e74c3c", "Narration / Base Audio", "audio_main")
+                        
+                        for clip in planned_clips:
+                            color = "#3498db" if clip["track"] == 1 else "#2ecc71"
+                            editor.add_clip(clip["track"], clip["start"], clip["duration"], color, clip["text"], clip["id"])
+                            
+                        def approve_timeline():
+                            edited_clips = editor.get_clips()
+                            for e_clip in edited_clips:
+                                for p_clip in planned_clips:
+                                    if p_clip["id"] == e_clip["id"]:
+                                        p_clip.update({"start": e_clip["start"], "duration": e_clip["duration"], "track": e_clip["track"]})
+                                        break
+                            self.custom_timeline = planned_clips
+                            editor.is_playing = False
+                            timeline_win.destroy()
+                            self.timeline_approved_event.set()
+                            
+                        btn_frame = tk.Frame(timeline_win, bg="#2b2b2b")
+                        btn_frame.pack(fill=tk.X, pady=10)
+                        tk.Button(btn_frame, text="Approve & Render Video", command=approve_timeline, bg="#4CAF50", fg="white", font=('Arial', 12, 'bold'), padx=20).pack(side=tk.RIGHT, padx=10)
+                        
+                        timeline_win.protocol("WM_DELETE_WINDOW", approve_timeline)
+                        
+                    self.root.after(0, show_timeline_window)
+                    
+                    while not self.timeline_approved_event.is_set():
+                        await asyncio.sleep(0.5)
+                        
                     break
         except Exception as e:
             raise RuntimeError(f"Image Collection failed: {str(e)}")
                     
         try:
-            return bot.criar_video_com_legendas(audio_file, srt_file, imagens_info, guiao, output_dir=out_dir, bg_music_path=bg_music, bg_volume=bg_volume, loop_bg=loop_bg, enable_narration=enable_narration, transcribe_mode=transcribe_mode, sub_font=sub_font, sub_color=sub_color, sub_size=sub_size, transition=transition, sub_y=sub_y, visual_effect=visual_effect)
+            return bot.criar_video_com_legendas(audio_file, srt_file, imagens_info, guiao, output_dir=out_dir, bg_music_path=bg_music, bg_volume=bg_volume, loop_bg=loop_bg, enable_narration=enable_narration, transcribe_mode=transcribe_mode, sub_font=sub_font, sub_color=sub_color, sub_size=sub_size, transition=transition, sub_y=sub_y, visual_effect=visual_effect, custom_timeline=self.custom_timeline)
         except Exception as e:
             raise RuntimeError(f"Video Rendering (MoviePy) failed: {str(e)}")

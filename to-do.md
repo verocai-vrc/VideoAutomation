@@ -7,6 +7,11 @@
 ## Completed
 
 ### Functionalities
+- [x] Advanced timeline editor for manual image/overlay timing adjustments
+    - [x] Create a GUI timeline component to visualize video duration, audio, and media tracks.
+    - [x] Implement drag-and-drop to manually adjust start times and durations of images/overlays.
+    - [x] Modify the video generation core to accept custom timestamps from the timeline editor.
+    - [x] Add a preview playback feature to check synchronization before rendering.
 - [x] Alternate to DuckDuckGo API for image search when request denyed
 - [x] After images are loaded, the user must be able to aprove or deny them and request another search if wanted
 - [x] When loading in a video, add an Option to add images over the video to ilustrate the topics talked

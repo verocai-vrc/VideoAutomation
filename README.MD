@@ -61,4 +61,7 @@ The program acts as an end-to-end production pipeline:
 ---
 
 ## 🎯 Development Roadmap
-- [ ] Advanced timeline editor for manual image/overlay timing adjustments.
+- [ ] Advanced timeline editor for manual image/overlay timing adjustments:
+  - [ ] Create a GUI timeline component to visualize tracks.
+  - [ ] Implement drag-and-drop for start times and durations.
+  - [ ] Add preview playback for synchronization checking.
