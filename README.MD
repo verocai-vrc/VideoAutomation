@@ -26,14 +26,17 @@ The program acts as an end-to-end production pipeline:
 ## 📋 Features
 
 ### Currently Implemented:
-- [x] **Automated Script Generation:** Generate highly detailed scripts dynamically to fit +60s timelines.
+- [x] **Automated Script Generation & Review:** Generate highly detailed scripts dynamically to fit +60s timelines, with the ability to pause, review, and manually edit the script before generation.
 - [x] **Professional Narration:** High-fidelity English TTS using neural voices (Toggleable for when you just want to subtitle a local video).
-- [x] **Dynamic Media Handling:** Support for importing local `.mp4`, `.mov`, `.png`, `.jpg` files alongside automated web images.
-- [x] **Smart Internet Search:** Automatically calculates how many images you need and fetches them via DuckDuckGo to hit your exact requested media count.
-- [x] **Native Synchronized Subtitles:** Word-by-word synced subtitles drawn completely in-memory using Pillow (no ImageMagick required!).
+- [x] **Dynamic Media Handling:** Import local videos/images and view live thumbnail previews directly in the modern UI.
+- [x] **Smart Internet Search & Fallback:** Automatically fetches images via DuckDuckGo, with a seamless fallback to Wikimedia Commons if rate-limited. Includes a UI window to review, approve, or retry image searches.
+- [x] **Video Overlays & B-Roll:** Intelligently overlays images on top of base videos, automatically timed to when their descriptive keywords are spoken (using Whisper AI).
+- [x] **Cinematic Effects & Transitions:** Easily apply visual effects (Zoom-in, Zoom-out, Pan) and transitions (Fade In/Out, Cut) directly from the GUI.
+- [x] **Advanced Subtitle Engine:** Word-by-word synced subtitles drawn completely in-memory using Pillow. Supports custom fonts, colors, sizing, and Y-positioning, complete with a real-time cellphone-shaped preview screen.
 - [x] **Background Audio Engine:** Add background music with adjustable volume that automatically loops to fit the video length.
-- [x] **Vertical Composition:** Videos and images are dynamically resized to standard 9:16 vertical format (1080x1920).
-- [x] **Highly Resilient Architecture:** Includes HTTP auto-retries for rate limits, memory-safe image validation to avoid render crashes, and fallback mechanisms for broken API metadata.
+- [x] **Vertical Composition:** Videos and images are dynamically resized to standard 9:16 vertical format (1080x1920) with smart layout boundaries so overlays never cover subtitles.
+- [x] **Highly Resilient Architecture:** Includes HTTP auto-retries, memory-safe image validation, fallback mechanisms, and robust timestamped file exports to prevent overwriting.
+- [x] **Modern GUI:** Clean, horizontal UI layout with real-time progress spinners and a one-click shortcut to immediately open the generated media.
 
 ---
 
@@ -58,7 +61,4 @@ The program acts as an end-to-end production pipeline:
 ---
 
 ## 🎯 Development Roadmap
-- [ ] Implement specific first/last image selection mechanics.
-- [ ] Overhaul GUI (corner layouts, dedicated slider sections, modern aesthetic window name).
-- [ ] Integrate alternative Image APIs (e.g., Pexels, Unsplash).
-- [ ] Add visual effects (smooth transitions and zoom-in/pan for static images).
+- [ ] Advanced timeline editor for manual image/overlay timing adjustments.

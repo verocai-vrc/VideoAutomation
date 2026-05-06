@@ -170,12 +170,20 @@ class ParceiroAutomacao:
         self.log(f"[V] Transcrição concluída com sucesso em {ASSETS_DIR}")
         return subs_path
 
-    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=OUTPUT_DIR, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True, transcribe_mode=False, sub_font="Arial Bold", sub_color="yellow", sub_size=60, transition="Cut", sub_y=1300):
+    def criar_video_com_legendas(self, audio_p, srt_p, imagens_info, guiao, output_dir=OUTPUT_DIR, bg_music_path=None, bg_volume=0.1, loop_bg=True, enable_narration=True, transcribe_mode=False, sub_font="Arial Bold", sub_color="yellow", sub_size=60, transition="Cut", sub_y=1300, visual_effect="None"):
         """Monta o vídeo final com imagens sincronizadas ao guião e legendas queimadas."""
         self.log("[*] A planear cronologia das imagens e a renderizar vídeo...")
         if not os.path.exists(output_dir): os.makedirs(output_dir)
-        tts_audio = AudioFileClip(audio_p)
-        duracao_planeada = tts_audio.duration
+        
+        video_base_original = None
+        if transcribe_mode and audio_p.lower().endswith(('.mp4', '.mov', '.avi', '.webm')):
+            video_base_original = VideoFileClip(audio_p)
+            video_base_original = fit_to_vertical(video_base_original)
+            tts_audio = video_base_original.audio
+            duracao_planeada = video_base_original.duration if video_base_original.duration else tts_audio.duration
+        else:
+            tts_audio = AudioFileClip(audio_p)
+            duracao_planeada = tts_audio.duration
 
         def fit_to_vertical(clip):
             w, h = clip.size
@@ -197,6 +205,39 @@ class ParceiroAutomacao:
             
             return clip
 
+        def apply_visual_effect(clip, effect, dur):
+            if effect == "None": return clip
+            w, h = clip.size
+            try:
+                if effect == "Zoom-In":
+                    c = clip.resized(lambda t: 1 + 0.1 * (t / max(dur, 0.001))) if hasattr(clip, 'resized') else clip.resize(lambda t: 1 + 0.1 * (t / max(dur, 0.001)))
+                    c = c.with_position(('center', 'center')) if hasattr(c, 'with_position') else c.set_position(('center', 'center'))
+                    comp = CompositeVideoClip([c], size=(w, h))
+                    return comp.with_duration(dur) if hasattr(comp, 'with_duration') else comp.set_duration(dur)
+                elif effect == "Zoom-Out":
+                    c = clip.resized(lambda t: 1.1 - 0.1 * (t / max(dur, 0.001))) if hasattr(clip, 'resized') else clip.resize(lambda t: 1.1 - 0.1 * (t / max(dur, 0.001)))
+                    c = c.with_position(('center', 'center')) if hasattr(c, 'with_position') else c.set_position(('center', 'center'))
+                    comp = CompositeVideoClip([c], size=(w, h))
+                    return comp.with_duration(dur) if hasattr(comp, 'with_duration') else comp.set_duration(dur)
+                elif effect.startswith("Pan "):
+                    c = clip.resized(1.1) if hasattr(clip, 'resized') else clip.resize(1.1)
+                    def pos(t):
+                        progress = t / max(dur, 0.001)
+                        cw, ch = c.size
+                        if effect == "Pan Left": x, y = -(cw - w) + (cw - w) * progress, -(ch - h) / 2
+                        elif effect == "Pan Right": x, y = 0 - (cw - w) * progress, -(ch - h) / 2
+                        elif effect == "Pan Up": x, y = -(cw - w) / 2, -(ch - h) + (ch - h) * progress
+                        elif effect == "Pan Down": x, y = -(cw - w) / 2, 0 - (ch - h) * progress
+                        else: x, y = -(cw - w) / 2, -(ch - h) / 2
+                        return (x, y)
+                    c = c.with_position(pos) if hasattr(c, 'with_position') else c.set_position(pos)
+                    comp = CompositeVideoClip([c], size=(w, h))
+                    return comp.with_duration(dur) if hasattr(comp, 'with_duration') else comp.set_duration(dur)
+                return clip
+            except Exception as e:
+                self.log(f"[!] Aviso ao aplicar efeito visual {effect}: {e}")
+                return clip
+
         def get_media_clip(path, dur):
             if path.lower().endswith(('.mp4', '.mov', '.avi', '.webm')):
                 clip = VideoFileClip(path)
@@ -216,6 +257,8 @@ class ParceiroAutomacao:
                     clip = clip.set_duration(dur)
                 clip = fit_to_vertical(clip)
                 
+            clip = apply_visual_effect(clip, visual_effect, dur)
+            
             effect_dur = min(0.5, dur / 2.0) if dur > 0 else 0.5
             is_v2 = hasattr(clip, 'with_effects')
             
@@ -243,6 +286,59 @@ class ParceiroAutomacao:
                 
             return clip
 
+        def get_overlay_clip(path, dur, sub_y, transition):
+            if path.lower().endswith(('.mp4', '.mov', '.avi', '.webm')):
+                clip = VideoFileClip(path)
+                if clip.duration < dur:
+                    repeats = int(dur // clip.duration) + 1
+                    clip = concatenate_videoclips([clip] * repeats, method="chain")
+                if hasattr(clip, 'subclipped'): clip = clip.subclipped(0, dur)
+                else: clip = clip.subclip(0, dur)
+            else:
+                clip = ImageClip(np.array(Image.open(path).convert('RGB')))
+                if hasattr(clip, 'with_duration'): clip = clip.with_duration(dur)
+                else: clip = clip.set_duration(dur)
+                
+            max_h = max(200, sub_y - 150)
+            max_w = 950
+            w, h = clip.size
+            ratio = min(max_w / float(max(w, 1)), max_h / float(max(h, 1)))
+            
+            if hasattr(clip, 'resized'): clip = clip.resized(ratio)
+            else: clip = clip.resize(ratio)
+                
+            clip = apply_visual_effect(clip, visual_effect, dur)
+            
+            pos_y = (max_h - (h * ratio)) / 2 + 50
+            if hasattr(clip, 'with_position'): clip = clip.with_position(('center', pos_y))
+            else: clip = clip.set_position(('center', pos_y))
+                
+            effect_dur = min(0.5, dur / 2.0) if dur > 0 else 0.5
+            is_v2 = hasattr(clip, 'with_effects')
+            try:
+                if is_v2:
+                    from moviepy.video.fx.FadeIn import FadeIn
+                    from moviepy.video.fx.FadeOut import FadeOut
+                    if transition == "Fade In": clip = clip.with_effects([FadeIn(effect_dur)])
+                    elif transition == "Fade Out": clip = clip.with_effects([FadeOut(effect_dur)])
+                    elif transition == "Fade In & Out": clip = clip.with_effects([FadeIn(effect_dur), FadeOut(effect_dur)])
+                else:
+                    def fx_fadein(c, d):
+                        d = max(0.001, d)
+                        return c.fl(lambda gf, t: (np.clip(t / d, 0.0, 1.0) * gf(t)).astype(np.uint8))
+                    def fx_fadeout(c, d):
+                        d = max(0.001, d)
+                        dur_val = c.duration if c.duration is not None else dur
+                        return c.fl(lambda gf, t: (np.clip((dur_val - t) / d, 0.0, 1.0) * gf(t)).astype(np.uint8))
+                    
+                    if transition == "Fade In": clip = fx_fadein(clip, effect_dur)
+                    elif transition == "Fade Out": clip = fx_fadeout(clip, effect_dur)
+                    elif transition == "Fade In & Out": clip = fx_fadeout(fx_fadein(clip, effect_dur), effect_dur)
+            except Exception as e:
+                self.log(f"[!] Aviso ao aplicar transição overlay {transition}: {e}")
+                
+            return clip
+
         # 1. Carregar legendas primeiro para ter tempos precisos
         try:
             subs = pysubs2.load(srt_p, encoding="utf-8")
@@ -261,56 +357,89 @@ class ParceiroAutomacao:
         guiao_lower = script_text.lower()
         matched = []
         unmatched = []
+        overlaid_clips = []
         
-        if not imagens_info:
-            video_base = ColorClip(size=(1080, 1920), color=(0,0,0))
-            if hasattr(video_base, 'with_duration'):
-                video_base = video_base.with_duration(duracao_planeada)
-            else:
-                video_base = video_base.set_duration(duracao_planeada)
-        else:
-            for info in imagens_info:
-                kw = info['keyword'].lower().strip()
-                match = re.search(r'\b' + re.escape(kw) + r'\b', guiao_lower) if kw else None
-                idx = match.start() if match else guiao_lower.find(kw)
-                    
-                if idx != -1 and kw:
-                    t = 0
-                    for start_idx, time in reversed(script_timings):
-                        if idx >= start_idx:
-                            t = time
-                            break
-                    matched.append((t, info['path']))
-                else:
-                    unmatched.append(info['path'])
-                    
-            matched.sort(key=lambda x: x[0])
-            
-            if not matched:
-                dur = duracao_planeada / max(1, len(unmatched))
-                img_clips = [get_media_clip(img, dur) for img in unmatched]
-            else:
-                if matched[0][0] > 0.5:
-                    matched.insert(0, (0.0, unmatched.pop(0))) if unmatched else matched.__setitem__(0, (0.0, matched[0][1]))
-                else:
-                    matched[0] = (0.0, matched[0][1])
-                    
-                starts, paths = [m[0] for m in matched], [m[1] for m in matched]
-                
-                if unmatched:
-                    last_t = starts[-1]
-                    step = (duracao_planeada - last_t) / (len(unmatched) + 1)
-                    for i, u in enumerate(unmatched):
-                        starts.append(last_t + step * (i + 1))
-                        paths.append(u)
+        if video_base_original is not None:
+            video_base = video_base_original
+            if imagens_info:
+                for info in imagens_info:
+                    kw = info['keyword'].lower().strip()
+                    match = re.search(r'\b' + re.escape(kw) + r'\b', guiao_lower) if kw else None
+                    idx = match.start() if match else guiao_lower.find(kw)
                         
-                img_clips = []
-                for i in range(len(starts)):
-                    dur = (starts[i+1] if i+1 < len(starts) else duracao_planeada) - starts[i]
-                    if dur > 0:
-                        img_clips.append(get_media_clip(paths[i], dur))
+                    if idx != -1 and kw:
+                        t = 0
+                        for start_idx, time in reversed(script_timings):
+                            if idx >= start_idx:
+                                t = time
+                                break
+                        matched.append((t, info['path']))
+                        
+                matched.sort(key=lambda x: x[0])
+                
+                for i, (t, path) in enumerate(matched):
+                    max_dur = 4.0
+                    next_t = matched[i+1][0] if i + 1 < len(matched) else duracao_planeada
+                    dur = min(max_dur, next_t - t)
+                    if dur <= 0: continue
+                    
+                    try:
+                        clip = get_overlay_clip(path, dur, sub_y, transition)
+                        if hasattr(clip, 'with_start'): clip = clip.with_start(t)
+                        else: clip = clip.set_start(t)
+                        overlaid_clips.append(clip)
+                    except Exception as e:
+                        self.log(f"[!] Erro ao criar overlay de {path}: {e}")
+        else:
+            if not imagens_info:
+                video_base = ColorClip(size=(1080, 1920), color=(0,0,0))
+                if hasattr(video_base, 'with_duration'):
+                    video_base = video_base.with_duration(duracao_planeada)
+                else:
+                    video_base = video_base.set_duration(duracao_planeada)
+            else:
+                for info in imagens_info:
+                    kw = info['keyword'].lower().strip()
+                    match = re.search(r'\b' + re.escape(kw) + r'\b', guiao_lower) if kw else None
+                    idx = match.start() if match else guiao_lower.find(kw)
+                        
+                    if idx != -1 and kw:
+                        t = 0
+                        for start_idx, time in reversed(script_timings):
+                            if idx >= start_idx:
+                                t = time
+                                break
+                        matched.append((t, info['path']))
+                    else:
+                        unmatched.append(info['path'])
+                        
+                matched.sort(key=lambda x: x[0])
+                
+                if not matched:
+                    dur = duracao_planeada / max(1, len(unmatched))
+                    img_clips = [get_media_clip(img, dur) for img in unmatched]
+                else:
+                    if matched[0][0] > 0.5:
+                        matched.insert(0, (0.0, unmatched.pop(0))) if unmatched else matched.__setitem__(0, (0.0, matched[0][1]))
+                    else:
+                        matched[0] = (0.0, matched[0][1])
+                        
+                    starts, paths = [m[0] for m in matched], [m[1] for m in matched]
+                    
+                    if unmatched:
+                        last_t = starts[-1]
+                        step = (duracao_planeada - last_t) / (len(unmatched) + 1)
+                        for i, u in enumerate(unmatched):
+                            starts.append(last_t + step * (i + 1))
+                            paths.append(u)
+                            
+                    img_clips = []
+                    for i in range(len(starts)):
+                        dur = (starts[i+1] if i+1 < len(starts) else duracao_planeada) - starts[i]
+                        if dur > 0:
+                            img_clips.append(get_media_clip(paths[i], dur))
 
-        video_base = concatenate_videoclips(img_clips, method="chain")
+            video_base = concatenate_videoclips(img_clips, method="compose")
 
         duracao_final = video_base.duration if hasattr(video_base, 'duration') and video_base.duration else duracao_planeada
 
@@ -344,13 +473,6 @@ class ParceiroAutomacao:
                 audio_layers.append(bg_clip)
             except Exception as e:
                 self.log(f"[!] Erro ao processar música de fundo: {e}")
-
-        if audio_layers:
-            final_audio = CompositeAudioClip(audio_layers)
-            if hasattr(video_base, 'with_audio'):
-                video_base = video_base.with_audio(final_audio)
-            else:
-                video_base = video_base.set_audio(final_audio)
 
         # 3. Processar Legendas (SRT -> TextClips)
         subtitle_clips = []
@@ -469,7 +591,21 @@ class ParceiroAutomacao:
             subtitle_clips.append(txt)
 
         # 4. Sobrepor tudo
-        video_final = CompositeVideoClip([video_base] + subtitle_clips, size=(1080, 1920))
+        bg_black = ColorClip(size=(1080, 1920), color=(0,0,0))
+        if hasattr(bg_black, 'with_duration'):
+            bg_black = bg_black.with_duration(duracao_final)
+        else:
+            bg_black = bg_black.set_duration(duracao_final)
+            
+        video_final = CompositeVideoClip([bg_black, video_base] + overlaid_clips + subtitle_clips, size=(1080, 1920))
+        
+        if audio_layers:
+            final_audio = CompositeAudioClip(audio_layers)
+            if hasattr(video_final, 'with_audio'):
+                video_final = video_final.with_audio(final_audio)
+            else:
+                video_final = video_final.set_audio(final_audio)
+                
         if hasattr(video_final, 'with_duration'):
             video_final = video_final.with_duration(duracao_final)
         else:
@@ -479,4 +615,13 @@ class ParceiroAutomacao:
         out = os.path.join(output_dir, f"video_legendado_{timestamp}.mp4")
         logger = UIProgressLogger(self.progress_cb) if UIProgressLogger and self.progress_cb else "bar"
         video_final.write_videofile(out, fps=24, codec="libx264", audio_codec="aac", logger=logger)
+        
+        # Clean up MoviePy clips to prevent FFmpeg memory leaks
+        try:
+            video_final.close()
+            if video_base_original: video_base_original.close()
+            if hasattr(tts_audio, 'close'): tts_audio.close()
+        except Exception as e:
+            self.log(f"[!] Aviso de limpeza de memória: {e}")
+            
         return out
