@@ -12,8 +12,8 @@ from tkinter import scrolledtext, filedialog, ttk
 from config import OLLAMA_API_URL, OUTPUT_DIR, ASSETS_DIR
 from core import ParceiroAutomacao
 from timeline import TimelineEditor
-from core.web_scraper import WebScraper
-from ui.dialogs import show_script_review, show_image_review
+from web_scraper import WebScraper
+from dialogs import show_script_review, show_image_review
 
 class AutomacaoGUI:
     def __init__(self, root):

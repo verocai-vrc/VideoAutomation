@@ -1,6 +1,6 @@
-from core.ai_scripting import AIScripter
-from core.audio_engine import AudioEngine
-from core.video_renderer import VideoRenderer
+from ai_scripting import AIScripter
+from audio_engine import AudioEngine
+from video_renderer import VideoRenderer
 
 class ParceiroAutomacao:
     """Facade class bridging the GUI to the specialized background engines."""
