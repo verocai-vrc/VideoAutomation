@@ -12,6 +12,7 @@ from tkinter import scrolledtext, filedialog, ttk
 from config import OLLAMA_API_URL, OUTPUT_DIR, ASSETS_DIR
 from core import ParceiroAutomacao
 from timeline import TimelineEditor
+from image_generator import AIImageGenerator
 from web_scraper import WebScraper
 from dialogs import show_script_review, show_image_review
 
@@ -39,10 +40,11 @@ class AutomacaoGUI:
         self.num_images_var = tk.IntVar(value=5)
         self.use_videos_var = tk.BooleanVar(value=True)
         self.use_images_var = tk.BooleanVar(value=True)
-        self.use_internet_search_var = tk.BooleanVar(value=True)
+        self.image_source_var = tk.StringVar(value="DuckDuckGo")
         self.enable_narration_var = tk.BooleanVar(value=True)
         self.transcribe_mode_var = tk.BooleanVar(value=False)
         self.script_tone_var = tk.StringVar(value="Educational")
+        self.hook_type_var = tk.StringVar(value="None")
         self.sub_font_var = tk.StringVar(value="Arial Bold")
         self.sub_font_file_var = tk.StringVar(value="")
         self.sub_color_var = tk.StringVar(value="yellow")
@@ -139,6 +141,10 @@ class AutomacaoGUI:
         self.tone_cb = ttk.Combobox(col1, textvariable=self.script_tone_var, values=["Educational", "Professional", "Humorous", "Dramatic", "Casual", "Enthusiastic"], state="readonly")
         self.tone_cb.pack(fill=tk.X, padx=10, pady=(0, 5))
         
+        tk.Label(col1, text="Opening Hook:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
+        self.hook_cb = ttk.Combobox(col1, textvariable=self.hook_type_var, values=["None", "Surprising Fact", "Provocative Question", "Bold Statement", "Story/Anecdote", "Direct Challenge"], state="readonly")
+        self.hook_cb.pack(fill=tk.X, padx=10, pady=(0, 5))
+        
         tk.Label(col1, text="AI Prompt:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
         self.prompt_text = scrolledtext.ScrolledText(col1, height=10, bg=entry_bg, fg=fg_color, insertbackground=fg_color)
         self.prompt_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
@@ -165,16 +171,21 @@ class AutomacaoGUI:
         toggles_frame.pack(fill=tk.X, padx=10, pady=10)
         tk.Checkbutton(toggles_frame, text="Use Videos", variable=self.use_videos_var, command=self.update_ui_states, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color).pack(anchor='w', pady=2)
         tk.Checkbutton(toggles_frame, text="Use Images", variable=self.use_images_var, command=self.update_ui_states, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color).pack(anchor='w', pady=2)
-        self.internet_search_cb = tk.Checkbutton(toggles_frame, text="Internet Image Search", variable=self.use_internet_search_var, command=self.update_ui_states, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color)
-        self.internet_search_cb.pack(anchor='w', pady=2)
+        
+        tk.Label(col2, text="Image Source:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(10, 2))
+        self.image_source_cb = ttk.Combobox(col2, textvariable=self.image_source_var, values=["DuckDuckGo", "AI Generator (Banana)"], state="readonly")
+        self.image_source_cb.pack(fill=tk.X, padx=10, pady=(0, 5))
+        self.image_source_var.trace_add("write", self.update_ui_states)
         
         tk.Label(col2, text="Number of Images:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
         self.num_images_spinbox = tk.Spinbox(col2, from_=1, to=100, textvariable=self.num_images_var, bg=entry_bg, fg=fg_color, insertbackground=fg_color, buttonbackground=btn_bg)
         self.num_images_spinbox.pack(fill=tk.X, padx=10, pady=2)
         
-        tk.Label(col2, text="Image Search Terms (comma separated):", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(10, 2))
-        self.terms_entry = tk.Entry(col2, textvariable=self.terms_var, bg=entry_bg, fg=fg_color, insertbackground=fg_color)
-        self.terms_entry.pack(fill=tk.X, padx=10, pady=(0, 10))
+        self.prompts_lbl = tk.Label(col2, text="Image Search Terms (comma separated):", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold'))
+        self.prompts_lbl.pack(anchor='w', padx=10, pady=(10, 2))
+        self.prompts_text = scrolledtext.ScrolledText(col2, height=4, bg=entry_bg, fg=fg_color, insertbackground=fg_color)
+        self.prompts_text.pack(fill=tk.X, padx=10, pady=(0, 10))
+        self.prompts_text.insert(tk.END, self.terms_var.get())
         
         tk.Label(col2, text="Transition Effect:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
         ttk.Combobox(col2, textvariable=self.transition_var, values=["Cut", "Fade In", "Fade Out", "Fade In & Out"], state="readonly").pack(fill=tk.X, padx=10, pady=(0, 10))
@@ -234,6 +245,7 @@ class AutomacaoGUI:
         self.sub_size_var.trace_add("write", lambda *args: self.update_preview())
         self.sub_y_var.trace_add("write", lambda *args: self.update_preview())
         self.root.after(100, self.update_preview)
+        self.update_ui_states()
         
         # --- Bottom Frame: Logs & Progress ---
         btn_container = tk.Frame(bottom_frame, bg=bg_color)
@@ -261,17 +273,23 @@ class AutomacaoGUI:
         self.log_area = scrolledtext.ScrolledText(bottom_frame, height=8, state='disabled', bg=entry_bg, fg=fg_color)
         self.log_area.pack(fill=tk.BOTH, expand=True)
 
-    def update_ui_states(self):
+    def update_ui_states(self, *args):
         use_img = self.use_images_var.get()
-        use_net = self.use_internet_search_var.get()
+        image_source = self.image_source_var.get()
         transcribe = self.transcribe_mode_var.get()
         
         self.num_images_spinbox.config(state="normal" if use_img else "disabled")
-        self.internet_search_cb.config(state="normal" if use_img else "disabled")
-        self.terms_entry.config(state="normal" if (use_img and use_net) else "disabled")
+        self.image_source_cb.config(state="readonly" if use_img else "disabled")
+        self.prompts_text.config(state="normal" if use_img else "disabled")
+        if image_source == "AI Generator (Banana)":
+            self.prompts_lbl.config(text="Image Prompts (one per line):")
+        else:
+            self.prompts_lbl.config(text="Image Search Terms (comma separated):")
+
         self.prompt_text.config(state="disabled" if transcribe else "normal")
         self.model_cb.config(state="disabled" if transcribe else "readonly")
         self.tone_cb.config(state="disabled" if transcribe else "readonly")
+        self.hook_cb.config(state="disabled" if transcribe else "readonly")
 
     def on_font_change(self, *args):
         presets = ["Arial", "Arial Bold", "Impact", "Comic Sans", "Times New Roman"]
@@ -452,12 +470,21 @@ class AutomacaoGUI:
         model = self.model_var.get()
         base_prompt = self.prompt_text.get(1.0, tk.END).strip()
         tone = self.script_tone_var.get()
-        prompt = f"{base_prompt}\n\nPlease ensure the overall tone of the script is strictly {tone}." if tone else base_prompt
-        terms = [t.strip() for t in self.terms_var.get().split(",") if t.strip()]
+        hook = self.hook_type_var.get()
+        
+        prompt = base_prompt
+        if tone: prompt += f"\n\nPlease ensure the overall tone of the script is strictly {tone}."
+        if hook and hook != "None": prompt += f"\n\nIMPORTANT: The very first sentence of the script MUST be a powerful, engaging '{hook}' to hook the viewer instantly."
+        
+        image_source = self.image_source_var.get()
+        prompts_raw = self.prompts_text.get(1.0, tk.END).strip()
+        if image_source == "AI Generator (Banana)":
+            terms = [p.strip() for p in prompts_raw.split('\n') if p.strip()]
+        else:
+            terms = [t.strip() for t in prompts_raw.split(",") if t.strip()]
         out_dir = self.out_dir_var.get()
         use_images = self.use_images_var.get()
         use_videos = self.use_videos_var.get()
-        use_internet = self.use_internet_search_var.get()
         bg_music = self.bg_music_var.get().strip()
         # Scale down 0-100% to a max of 0.15 for intuitive background mixing
         bg_volume = (self.volume_var.get() / 100.0) * 0.15
@@ -476,11 +503,11 @@ class AutomacaoGUI:
         visual_effect = self.visual_effect_var.get()
         
         # Use a background thread to prevent UI freezing
-        threading.Thread(target=self.run_automation_thread, args=(model, prompt, terms, out_dir, self.local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_outline_color, sub_outline_width, sub_size, transition, sub_y, visual_effect), daemon=True).start()
+        threading.Thread(target=self.run_automation_thread, args=(model, prompt, terms, out_dir, self.local_imgs, use_images, use_videos, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_outline_color, sub_outline_width, sub_size, transition, sub_y, visual_effect, image_source), daemon=True).start()
         
-    def run_automation_thread(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_outline_color, sub_outline_width, sub_size, transition, sub_y, visual_effect):
+    def run_automation_thread(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_outline_color, sub_outline_width, sub_size, transition, sub_y, visual_effect, image_source):
         try:
-            out_path = asyncio.run(self.async_workflow(model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_outline_color, sub_outline_width, sub_size, transition, sub_y, visual_effect))
+            out_path = asyncio.run(self.async_workflow(model, prompt, terms, out_dir, local_imgs, use_images, use_videos, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_outline_color, sub_outline_width, sub_size, transition, sub_y, visual_effect, image_source))
             self.last_generated_media_path = out_path
             self.log(f"\n[*] DONE! Video saved to {out_path}")
             self.root.after(0, lambda: self.open_media_btn.config(state='normal'))
@@ -490,7 +517,7 @@ class AutomacaoGUI:
             self.is_generating = False
             self.root.after(0, lambda: self.btn.config(state='normal'))
             
-    async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, use_internet, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_outline_color, sub_outline_width, sub_size, transition, sub_y, visual_effect):
+    async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_outline_color, sub_outline_width, sub_size, transition, sub_y, visual_effect, image_source):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         base_name = f"projeto_{timestamp}"
         bot = ParceiroAutomacao(model=model, log_cb=self.log, progress_cb=self.update_progress)
@@ -569,10 +596,20 @@ class AutomacaoGUI:
                             self.log(f"[*] Imagem local adicionada à fila: {kw}")
         
                     # 2. Processar imagens DuckDuckGo
-                    if use_images and terms and use_internet and local_image_count < num_images:
-                        scraper = WebScraper(log_cb=self.log)
-                        ddg_images, local_image_count = await scraper.scrape_images(terms, num_images, local_image_count, ASSETS_DIR)
-                        imagens_info.extend(ddg_images)
+                    if use_images and terms and local_image_count < num_images:
+                        num_to_generate = num_images - local_image_count
+                        if image_source == "AI Generator (Banana)":
+                            self.log(f"[*] Handing off to AI Image Generator...")
+                            ai_gen = AIImageGenerator(log_cb=self.log)
+                            try:
+                                ai_images = await ai_gen.generate_images(terms, num_to_generate, ASSETS_DIR)
+                                imagens_info.extend(ai_images)
+                            except (ValueError, RuntimeError) as e:
+                                self.log(f"[!] AI Generation Error: {e}")
+                        else:
+                            scraper = WebScraper(log_cb=self.log)
+                            ddg_images, _ = await scraper.scrape_images(terms, num_to_generate, 0, ASSETS_DIR)
+                            imagens_info.extend(ddg_images)
                                 
                 if not imagens_info:
                     self.log("[!] No media provided/found. Rendering video with black background.")

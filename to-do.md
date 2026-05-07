@@ -1,15 +1,6 @@
 # To-do list
 
 ## Pending Tasks
-- implement image generation with nano banana via API key
-    - select how many images i want to generate.
-    - have option do prompt each image separately according to user or script
-    - making sure generate images are on 9:16 ratio
-    - save generated image locally
-    - implement rate limits monitoring to be aware of API usage limits (i have gemini pro)
-    - cost controll if to many images are requested in a short span to prevent abuse of API
-    - use variable limite_diario as max usage rate per day and prevent over usage
-- implement hook generators to maximize engagement 
 ---
 
 ## Completed
@@ -27,6 +18,14 @@
     - [x] Make sure embeded images dont cover the subtitles
 - [x] Add Transition effects (fade in, fade out, cut) + Controll for this on the GUI
 - [x] Option to Add visual Effects (Zoom-In, Zoom-Out, Pan) to medias
+- [x] Implement hook generators to maximize engagement (via Opening Hook AI directive)
+- [x] AI Image Generation (Banana API)
+    - [x] Select how many images to generate.
+    - [x] Prompt each image separately via the UI.
+    - [x] Enforce 9:16 aspect ratio for generated images.
+    - [x] Save generated images locally to the assets folder.
+    - [x] Implement rate limit monitoring and cost control via a daily usage tracker.
+    - [x] Use a configurable `DAILY_LIMIT` to prevent over-usage.
 - [x] Add cellphone shaped preview screen
     - [x] to preview the changes on subtitle style and placement
     - [x] Make subtitle boundary editable on the subtitle section
