@@ -1,7 +1,15 @@
 # To-do list
 
 ## Pending Tasks
-
+- implement image generation with nano banana via API key
+    - select how many images i want to generate.
+    - have option do prompt each image separately according to user or script
+    - making sure generate images are on 9:16 ratio
+    - save generated image locally
+    - implement rate limits monitoring to be aware of API usage limits (i have gemini pro)
+    - cost controll if to many images are requested in a short span to prevent abuse of API
+    - use variable limite_diario as max usage rate per day and prevent over usage
+- implement hook generators to maximize engagement 
 ---
 
 ## Completed
@@ -40,4 +48,4 @@
 - [x] when making a video with images, using the AI narration, subtitles arent visible
 - [x] the narration is including the time stamps and ruining user experience
 - [x] timeline editor window is blank, Cant edit the timeline or even tell the program to keep going without editing. Program gets softlocked waiting for response that cant be given
-- [x] Subtitles are not visible when generating videos with images
+- [x] Subtitles are STILL not visible when generating videos with images

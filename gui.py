@@ -42,6 +42,7 @@ class AutomacaoGUI:
         self.use_internet_search_var = tk.BooleanVar(value=True)
         self.enable_narration_var = tk.BooleanVar(value=True)
         self.transcribe_mode_var = tk.BooleanVar(value=False)
+        self.script_tone_var = tk.StringVar(value="Educational")
         self.sub_font_var = tk.StringVar(value="Arial Bold")
         self.sub_font_file_var = tk.StringVar(value="")
         self.sub_color_var = tk.StringVar(value="yellow")
@@ -134,6 +135,10 @@ class AutomacaoGUI:
         
         tk.Checkbutton(col1, text="Transcribe Uploaded Video (Whisper AI)", variable=self.transcribe_mode_var, command=self.update_ui_states, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color).pack(anchor='w', padx=10, pady=10)
         
+        tk.Label(col1, text="Script Tone:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
+        self.tone_cb = ttk.Combobox(col1, textvariable=self.script_tone_var, values=["Educational", "Professional", "Humorous", "Dramatic", "Casual", "Enthusiastic"], state="readonly")
+        self.tone_cb.pack(fill=tk.X, padx=10, pady=(0, 5))
+        
         tk.Label(col1, text="AI Prompt:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
         self.prompt_text = scrolledtext.ScrolledText(col1, height=10, bg=entry_bg, fg=fg_color, insertbackground=fg_color)
         self.prompt_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
@@ -192,12 +197,15 @@ class AutomacaoGUI:
         tk.Entry(bg_btn_frame, textvariable=self.bg_music_var, bg=entry_bg, fg=fg_color, insertbackground=fg_color).pack(side=tk.LEFT, fill=tk.X, expand=True)
         tk.Button(bg_btn_frame, text="Browse", command=self.browse_music, bg=btn_bg, fg=fg_color).pack(side=tk.LEFT, padx=(5,0))
         
-        tk.Label(col3, text="Volume:", bg=panel_bg, fg=fg_color, font=('Arial', 9)).pack(anchor='w', padx=10, pady=(10, 0))
+        tk.Label(col3, text="Background Volume (%):", bg=panel_bg, fg=fg_color, font=('Arial', 9)).pack(anchor='w', padx=10, pady=(10, 0))
         vol_frame = tk.Frame(col3, bg=panel_bg)
         vol_frame.pack(fill=tk.X, padx=10, pady=2)
-        self.volume_scale = ttk.Scale(vol_frame, from_=0.0, to=1.0, orient=tk.HORIZONTAL)
-        self.volume_scale.set(0.1)
-        self.volume_scale.pack(fill=tk.X, expand=True)
+        self.volume_var = tk.DoubleVar(value=10.0)
+        self.volume_scale = ttk.Scale(vol_frame, from_=0.0, to=100.0, orient=tk.HORIZONTAL, variable=self.volume_var)
+        self.volume_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.vol_lbl = tk.Label(vol_frame, text="10%", bg=panel_bg, fg=fg_color, font=('Arial', 8), width=4)
+        self.vol_lbl.pack(side=tk.LEFT, padx=5)
+        self.volume_var.trace_add("write", lambda *a: self.vol_lbl.config(text=f"{int(self.volume_var.get())}%"))
         
         tk.Checkbutton(col3, text="Loop Background Music", variable=self.loop_bg_var, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color).pack(anchor='w', padx=10, pady=10)
         
@@ -263,6 +271,7 @@ class AutomacaoGUI:
         self.terms_entry.config(state="normal" if (use_img and use_net) else "disabled")
         self.prompt_text.config(state="disabled" if transcribe else "normal")
         self.model_cb.config(state="disabled" if transcribe else "readonly")
+        self.tone_cb.config(state="disabled" if transcribe else "readonly")
 
     def on_font_change(self, *args):
         presets = ["Arial", "Arial Bold", "Impact", "Comic Sans", "Times New Roman"]
@@ -441,14 +450,17 @@ class AutomacaoGUI:
         self._update_spinner()
         
         model = self.model_var.get()
-        prompt = self.prompt_text.get(1.0, tk.END).strip()
+        base_prompt = self.prompt_text.get(1.0, tk.END).strip()
+        tone = self.script_tone_var.get()
+        prompt = f"{base_prompt}\n\nPlease ensure the overall tone of the script is strictly {tone}." if tone else base_prompt
         terms = [t.strip() for t in self.terms_var.get().split(",") if t.strip()]
         out_dir = self.out_dir_var.get()
         use_images = self.use_images_var.get()
         use_videos = self.use_videos_var.get()
         use_internet = self.use_internet_search_var.get()
         bg_music = self.bg_music_var.get().strip()
-        bg_volume = self.volume_scale.get()
+        # Scale down 0-100% to a max of 0.15 for intuitive background mixing
+        bg_volume = (self.volume_var.get() / 100.0) * 0.15
         loop_bg = self.loop_bg_var.get()
         num_images = self.num_images_var.get()
         enable_narration = self.enable_narration_var.get()
@@ -625,8 +637,19 @@ class AutomacaoGUI:
                         editor = TimelineEditor(timeline_win, duration=duration)
                         editor.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
                         
+                        # Initialize Audio Preview
+                        editor.set_audio_sources(audio_file, bg_music if bg_music and os.path.exists(bg_music) else None, bg_volume)
+                        
                         editor.add_clip(0, 0, duration, "#e74c3c", "Narration / Base Audio", "audio_main")
                         
+                        if bg_music and os.path.exists(bg_music):
+                            try:
+                                from moviepy.audio.io.AudioFileClip import AudioFileClip
+                                bg_dur = AudioFileClip(bg_music).duration
+                                editor.add_clip(3, 0, min(bg_dur, duration), "#9b59b6", os.path.basename(bg_music), "bg_music")
+                            except:
+                                editor.add_clip(3, 0, duration, "#9b59b6", os.path.basename(bg_music), "bg_music")
+                                
                         for clip in planned_clips:
                             color = "#3498db" if clip["track"] == 1 else "#2ecc71"
                             editor.add_clip(clip["track"], clip["start"], clip["duration"], color, clip["text"], clip["id"])
@@ -634,12 +657,22 @@ class AutomacaoGUI:
                         def approve_timeline():
                             edited_clips = editor.get_clips()
                             for e_clip in edited_clips:
+                                if e_clip["id"] == "bg_music":
+                                    planned_clips.append({
+                                        "id": "bg_music",
+                                        "path": bg_music,
+                                        "start": e_clip["start"],
+                                        "duration": e_clip["duration"],
+                                        "track": e_clip["track"]
+                                    })
+                                    continue
                                 for p_clip in planned_clips:
                                     if p_clip["id"] == e_clip["id"]:
                                         p_clip.update({"start": e_clip["start"], "duration": e_clip["duration"], "track": e_clip["track"]})
                                         break
                             self.custom_timeline = planned_clips
                             editor.is_playing = False
+                            editor._stop_audio()
                             timeline_win.destroy()
                             self.timeline_approved_event.set()
                             

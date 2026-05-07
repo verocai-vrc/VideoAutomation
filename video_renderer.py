@@ -4,6 +4,7 @@ import re
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import pysubs2
+import tempfile
 
 # Force MoviePy and ImageIO to use the local FFmpeg binary if it exists
 ffmpeg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ffmpeg.exe")
@@ -450,24 +451,57 @@ class VideoRenderer:
                 elif hasattr(bg_clip, 'with_volume_multiplier'): bg_clip = bg_clip.with_volume_multiplier(bg_volume)
                 elif hasattr(bg_clip, 'volumex'): bg_clip = bg_clip.volumex(bg_volume)
                 
-                if loop_bg:
-                    repeats = int(duracao_final // bg_clip.duration) + 1
-                    bg_clips = [bg_clip.with_start(i * bg_clip.duration) for i in range(repeats)]
-                    bg_clip = CompositeAudioClip(bg_clips)
-                    if hasattr(bg_clip, 'with_duration'): bg_clip = bg_clip.with_duration(duracao_final)
-                    else: bg_clip = bg_clip.set_duration(duracao_final)
+                bg_start = 0.0
+                bg_dur = None
+                is_custom_bg = False
+                bg_found_in_timeline = False
+                
+                if custom_timeline:
+                    for item in custom_timeline:
+                        if item.get('id') == 'bg_music':
+                            bg_start = item['start']
+                            bg_dur = item['duration']
+                            is_custom_bg = True
+                            bg_found_in_timeline = True
+                            break
+                            
+                if custom_timeline and not bg_found_in_timeline:
+                    self.log("[*] Música de fundo removida na timeline.")
                 else:
-                    if hasattr(bg_clip, 'with_duration'):
-                        bg_clip = bg_clip.with_duration(min(duracao_final, bg_clip.duration))
+                    if is_custom_bg:
+                        if hasattr(bg_clip, 'with_start'): bg_clip = bg_clip.with_start(bg_start)
+                        else: bg_clip = bg_clip.set_start(bg_start)
+                        
+                        if bg_dur is not None:
+                            if hasattr(bg_clip, 'with_duration'): bg_clip = bg_clip.with_duration(bg_dur)
+                            else: bg_clip = bg_clip.set_duration(bg_dur)
+                        
+                        if loop_bg:
+                            repeats = int(bg_dur // bg_clip.duration) + 1
+                            bg_clips = [bg_clip.with_start(bg_start + i * bg_clip.duration) for i in range(repeats)]
+                            bg_clip = CompositeAudioClip(bg_clips)
+                            if hasattr(bg_clip, 'with_duration'): bg_clip = bg_clip.with_duration(bg_dur).with_start(bg_start)
+                            else: bg_clip = bg_clip.set_duration(bg_dur).set_start(bg_start)
                     else:
-                        bg_clip = bg_clip.set_duration(min(duracao_final, bg_clip.duration))
-                    
-                audio_layers.append(bg_clip)
+                        if loop_bg:
+                            repeats = int(duracao_final // bg_clip.duration) + 1
+                            bg_clips = [bg_clip.with_start(i * bg_clip.duration) for i in range(repeats)]
+                            bg_clip = CompositeAudioClip(bg_clips)
+                            if hasattr(bg_clip, 'with_duration'): bg_clip = bg_clip.with_duration(duracao_final)
+                            else: bg_clip = bg_clip.set_duration(duracao_final)
+                        else:
+                            if hasattr(bg_clip, 'with_duration'):
+                                bg_clip = bg_clip.with_duration(min(duracao_final, bg_clip.duration))
+                            else:
+                                bg_clip = bg_clip.set_duration(min(duracao_final, bg_clip.duration))
+                        
+                    audio_layers.append(bg_clip)
             except Exception as e:
                 self.log(f"[!] Erro ao processar música de fundo: {e}")
 
         # 3. Processar Legendas (SRT -> TextClips)
         subtitle_clips = []
+        temp_subtitle_files = []
         
         def criar_legenda_pil(texto):
             import textwrap
@@ -527,8 +561,13 @@ class VideoRenderer:
             except AttributeError:
                 draw.text((x, y), wrapped_text, font=font, fill=sub_color)
             
-            img_np = np.array(img)
-            return ImageClip(img_np)
+            # Save to a temporary PNG file to guarantee MoviePy detects the Alpha mask perfectly
+            fd, temp_path = tempfile.mkstemp(suffix=".png")
+            os.close(fd)
+            img.save(temp_path, format="PNG")
+            temp_subtitle_files.append(temp_path)
+            
+            return ImageClip(temp_path, transparent=True)
 
         # Group word-by-word subtitles into cleaner, multi-word lines for rendering
         grouped_subs = []
@@ -574,7 +613,10 @@ class VideoRenderer:
             subtitle_clips.append(txt)
 
         # 4. Sobrepor tudo
-        video_final = CompositeVideoClip(base_clips + overlaid_clips + subtitle_clips, size=(1080, 1920), bg_color=(0,0,0))
+        base_composite = CompositeVideoClip(base_clips + overlaid_clips, size=(1080, 1920), bg_color=(0,0,0))
+        
+        # Isolate subtitles on the absolute top layer using a separate composition
+        video_final = CompositeVideoClip([base_composite] + subtitle_clips, size=(1080, 1920))
         
         if audio_layers:
             final_audio = CompositeAudioClip(audio_layers)
@@ -598,6 +640,14 @@ class VideoRenderer:
             video_final.close()
             if video_base_original: video_base_original.close()
             if hasattr(tts_audio, 'close'): tts_audio.close()
+            
+            # Clean up the temporary subtitle PNG files
+            for temp_file in temp_subtitle_files:
+                try:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                except OSError:
+                    pass
         except Exception as e:
             self.log(f"[!] Aviso de limpeza de memória: {e}")
             

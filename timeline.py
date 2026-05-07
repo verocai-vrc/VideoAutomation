@@ -1,5 +1,6 @@
 import tkinter as tk
 import time
+import numpy as np
 
 class TimelineEditor(tk.Frame):
     def __init__(self, parent, duration=60, *args, **kwargs):
@@ -9,7 +10,23 @@ class TimelineEditor(tk.Frame):
         self.track_height = 60
         self.ruler_height = 30
         self.canvas_width = self.duration * self.pixels_per_second
-        self.canvas_height = self.ruler_height + (self.track_height * 3) # 3 default tracks
+        self.canvas_height = self.ruler_height + (self.track_height * 4) # 4 default tracks
+        
+        self.audio_main_path = None
+        self.audio_bg_path = None
+        self.bg_volume = 0.1
+        
+        try:
+            import os
+            os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
+            import pygame
+            pygame.mixer.init(frequency=44100, size=-16, channels=2)
+            self.pygame = pygame
+        except:
+            self.pygame = None
+
+        self.main_channel = None
+        self.bg_channel = None
         
         self.control_frame = tk.Frame(self, bg="#1e1e1e")
         self.control_frame.pack(side=tk.TOP, fill=tk.X)
@@ -32,7 +49,7 @@ class TimelineEditor(tk.Frame):
         self.selected_group_tag = None
         
         self.draw_ruler()
-        self.draw_tracks(3)
+        self.draw_tracks(4)
         
         self.playhead_time = 0.0
         self.playhead_id = self.canvas.create_line(0, 0, 0, self.canvas_height, fill="#ff3333", width=2, tags="playhead")
@@ -80,7 +97,7 @@ class TimelineEditor(tk.Frame):
             self.canvas.create_rectangle(0, y1, self.canvas_width, y2, fill=bg_color, outline="#333333")
             
             # Track labels
-            labels = ["Audio / TTS", "Base Video", "Overlays"]
+            labels = ["Audio / TTS", "Base Video", "Overlays", "Background Music"]
             label = labels[i] if i < len(labels) else f"Track {i+1}"
             self.canvas.create_text(10, y1 + 10, text=label, fill="#888888", anchor="w", font=("Arial", 9, "bold"))
             
@@ -150,9 +167,9 @@ class TimelineEditor(tk.Frame):
             coords = self.canvas.coords(rect_item)
             center_y = (coords[1] + coords[3]) / 2
             
-            # Find closest track index (0, 1, or 2)
+            # Find closest track index (0, 1, 2, or 3)
             track_index = int((center_y - self.ruler_height) / self.track_height)
-            track_index = max(0, min(track_index, 2))
+            track_index = max(0, min(track_index, 3))
             
             # Snap clip to the nearest valid track
             target_y1 = self.ruler_height + (track_index * self.track_height) + 20
@@ -248,6 +265,65 @@ class TimelineEditor(tk.Frame):
         if self.is_playing:
             self._last_time = time.time()
             
+    def set_audio_sources(self, main_path, bg_path=None, bg_vol=0.1):
+        self.audio_main_path = main_path
+        self.audio_bg_path = bg_path
+        self.bg_volume = bg_vol
+
+    def _play_audio(self):
+        if not self.pygame: return
+        import threading
+        
+        def play_thread():
+            try:
+                from moviepy.audio.io.AudioFileClip import AudioFileClip
+                
+                if self.main_channel: self.main_channel.stop()
+                if self.bg_channel: self.bg_channel.stop()
+                
+                clips = self.get_clips()
+                main_start = 0
+                bg_start = 0
+                for c in clips:
+                    if c['id'] == 'audio_main': main_start = c['start']
+                    if c['id'] == 'bg_music': bg_start = c['start']
+                    
+                if self.audio_main_path:
+                    try:
+                        clip = AudioFileClip(self.audio_main_path)
+                        if self.playhead_time >= main_start and self.playhead_time < main_start + clip.duration:
+                            offset = self.playhead_time - main_start
+                            sub = clip.subclip(offset)
+                            arr = sub.to_soundarray(fps=44100)
+                            if arr.ndim == 1: arr = np.column_stack((arr, arr))
+                            arr_16 = (arr * 32767).astype(np.int16)
+                            main_sound = self.pygame.sndarray.make_sound(arr_16)
+                            self.main_channel = main_sound.play()
+                    except Exception as e: print("Error playing main audio:", e)
+
+                if self.audio_bg_path:
+                    try:
+                        clip = AudioFileClip(self.audio_bg_path)
+                        if self.playhead_time >= bg_start:
+                            offset = self.playhead_time - bg_start
+                            if offset < clip.duration:
+                                sub = clip.subclip(offset)
+                                arr = sub.to_soundarray(fps=44100)
+                                arr = arr * self.bg_volume
+                                if arr.ndim == 1: arr = np.column_stack((arr, arr))
+                                arr_16 = (np.clip(arr, -1.0, 1.0) * 32767).astype(np.int16)
+                                bg_sound = self.pygame.sndarray.make_sound(arr_16)
+                                self.bg_channel = bg_sound.play()
+                    except Exception as e: print("Error playing bg audio:", e)
+            except Exception as e: print("Audio playback failed:", e)
+
+        threading.Thread(target=play_thread, daemon=True).start()
+
+    def _stop_audio(self):
+        if not self.pygame: return
+        if self.main_channel: self.main_channel.stop()
+        if self.bg_channel: self.bg_channel.stop()
+            
     def toggle_playback(self):
         self.is_playing = not self.is_playing
         if self.is_playing:
@@ -255,9 +331,11 @@ class TimelineEditor(tk.Frame):
             if self.playhead_time >= self.duration:
                 self.set_playhead(0) # Auto-rewind if at the end
             self._last_time = time.time()
+            self._play_audio()
             self._update_playback()
         else:
             self.play_btn.config(text="▶ Play", bg="#4CAF50")
+            self._stop_audio()
             
     def _update_playback(self):
         if not self.is_playing: return
