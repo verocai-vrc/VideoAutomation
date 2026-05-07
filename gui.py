@@ -173,8 +173,12 @@ class AutomacaoGUI:
         tk.Checkbutton(toggles_frame, text="Use Images", variable=self.use_images_var, command=self.update_ui_states, bg=panel_bg, fg=fg_color, selectcolor=btn_bg, activebackground=panel_bg, activeforeground=fg_color).pack(anchor='w', pady=2)
         
         tk.Label(col2, text="Image Source:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(10, 2))
-        self.image_source_cb = ttk.Combobox(col2, textvariable=self.image_source_var, values=["DuckDuckGo", "AI Generator (Banana)"], state="readonly")
-        self.image_source_cb.pack(fill=tk.X, padx=10, pady=(0, 5))
+        src_frame = tk.Frame(col2, bg=panel_bg)
+        src_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+        self.image_source_cb = ttk.Combobox(src_frame, textvariable=self.image_source_var, values=["DuckDuckGo", "AI Generator (Google Imagen)"], state="readonly")
+        self.image_source_cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.test_api_btn = tk.Button(src_frame, text="Test API", command=self.test_api_connection, bg=btn_bg, fg=fg_color)
+        self.test_api_btn.pack(side=tk.LEFT, padx=(5, 0))
         self.image_source_var.trace_add("write", self.update_ui_states)
         
         tk.Label(col2, text="Number of Images:", bg=panel_bg, fg=fg_color, font=('Arial', 9, 'bold')).pack(anchor='w', padx=10, pady=(5, 2))
@@ -281,15 +285,38 @@ class AutomacaoGUI:
         self.num_images_spinbox.config(state="normal" if use_img else "disabled")
         self.image_source_cb.config(state="readonly" if use_img else "disabled")
         self.prompts_text.config(state="normal" if use_img else "disabled")
-        if image_source == "AI Generator (Banana)":
+        if image_source == "AI Generator (Google Imagen)":
             self.prompts_lbl.config(text="Image Prompts (one per line):")
+            self.test_api_btn.config(state="normal" if use_img else "disabled")
         else:
             self.prompts_lbl.config(text="Image Search Terms (comma separated):")
+            self.test_api_btn.config(state="disabled")
 
         self.prompt_text.config(state="disabled" if transcribe else "normal")
         self.model_cb.config(state="disabled" if transcribe else "readonly")
         self.tone_cb.config(state="disabled" if transcribe else "readonly")
         self.hook_cb.config(state="disabled" if transcribe else "readonly")
+
+    def test_api_connection(self):
+        def _test():
+            from config import GEMINI_API_KEY
+            self.log("[*] Testing Google API Connection...")
+            if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY":
+                self.log("[!] API Key is missing. Please set GEMINI_API_KEY in config.py.")
+                return
+            
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+                response = requests.get(url, timeout=10)
+                if response.status_code == 200:
+                    self.log("[*] SUCCESS: Google API Connection verified!")
+                else:
+                    error_msg = response.json().get('error', {}).get('message', 'Unknown error')
+                    self.log(f"[!] FAILED: Google API Error {response.status_code}: {error_msg}")
+            except Exception as e:
+                self.log(f"[!] ERROR: Could not connect to Google API. Details: {e}")
+
+        threading.Thread(target=_test, daemon=True).start()
 
     def on_font_change(self, *args):
         presets = ["Arial", "Arial Bold", "Impact", "Comic Sans", "Times New Roman"]
@@ -346,14 +373,17 @@ class AutomacaoGUI:
             
         x, y = (preview_w - text_w) / 2, sub_y
         
-        for ox in range(-stroke_width, stroke_width + 1):
-            for oy in range(-stroke_width, stroke_width + 1):
-                if ox == 0 and oy == 0: continue
-                try: draw.multiline_text((x + ox, y + oy), texto, font=font, fill=sub_outline_color, align='center')
-                except AttributeError: draw.text((x + ox, y + oy), texto, font=font, fill=sub_outline_color)
-                
-        try: draw.multiline_text((x, y), texto, font=font, fill=sub_color, align='center')
-        except AttributeError: draw.text((x, y), texto, font=font, fill=sub_color)
+        try:
+            draw.multiline_text((x, y), texto, font=font, fill=sub_color, align='center', stroke_width=stroke_width, stroke_fill=sub_outline_color)
+        except TypeError:
+            for ox in range(-stroke_width, stroke_width + 1):
+                for oy in range(-stroke_width, stroke_width + 1):
+                    if ox == 0 and oy == 0: continue
+                    try: draw.multiline_text((x + ox, y + oy), texto, font=font, fill=sub_outline_color, align='center')
+                    except AttributeError: draw.text((x + ox, y + oy), texto, font=font, fill=sub_outline_color)
+                    
+            try: draw.multiline_text((x, y), texto, font=font, fill=sub_color, align='center')
+            except AttributeError: draw.text((x, y), texto, font=font, fill=sub_color)
         
         img_resized = img.resize((int(preview_w * scale), int(preview_h * scale)), Image.LANCZOS)
         self.preview_tk = ImageTk.PhotoImage(img_resized)
@@ -478,7 +508,7 @@ class AutomacaoGUI:
         
         image_source = self.image_source_var.get()
         prompts_raw = self.prompts_text.get(1.0, tk.END).strip()
-        if image_source == "AI Generator (Banana)":
+        if image_source == "AI Generator (Google Imagen)":
             terms = [p.strip() for p in prompts_raw.split('\n') if p.strip()]
         else:
             terms = [t.strip() for t in prompts_raw.split(",") if t.strip()]
@@ -598,7 +628,7 @@ class AutomacaoGUI:
                     # 2. Processar imagens DuckDuckGo
                     if use_images and terms and local_image_count < num_images:
                         num_to_generate = num_images - local_image_count
-                        if image_source == "AI Generator (Banana)":
+                        if image_source == "AI Generator (Google Imagen)":
                             self.log(f"[*] Handing off to AI Image Generator...")
                             ai_gen = AIImageGenerator(log_cb=self.log)
                             try:
@@ -684,7 +714,8 @@ class AutomacaoGUI:
                                 from moviepy.audio.io.AudioFileClip import AudioFileClip
                                 bg_dur = AudioFileClip(bg_music).duration
                                 editor.add_clip(3, 0, min(bg_dur, duration), "#9b59b6", os.path.basename(bg_music), "bg_music")
-                            except:
+                            except Exception as e:
+                                self.log(f"[!] Aviso: Não foi possível ler duração da música ({e}). Usando duração base.")
                                 editor.add_clip(3, 0, duration, "#9b59b6", os.path.basename(bg_music), "bg_music")
                                 
                         for clip in planned_clips:

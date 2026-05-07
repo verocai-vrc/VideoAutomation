@@ -54,7 +54,8 @@ class VideoRenderer:
             else:
                 with AudioFileClip(audio_p) as a:
                     duracao_planeada = a.duration
-        except:
+        except Exception as e:
+            self.log(f"[!] Aviso ao calcular duração (usando 60s fallback): {e}")
             duracao_planeada = 60.0
 
         try:
@@ -64,7 +65,8 @@ class VideoRenderer:
             for line in subs:
                 script_timings.append((len(script_text), line.start / 1000.0))
                 script_text += line.text + " "
-        except:
+        except Exception as e:
+            self.log(f"[!] Erro ao carregar legendas no planeamento: {e}")
             script_text = ""
             script_timings = []
 
@@ -503,32 +505,36 @@ class VideoRenderer:
         subtitle_clips = []
         temp_subtitle_files = []
         
+        # --- PERFORMANCE OPTIMIZATION 1: Cache the font outside the loop ---
+        font_to_use = None
+        if sub_font_file and os.path.exists(sub_font_file):
+            font_to_use = sub_font_file
+        else:
+            font_map = {
+                "Arial": "arial.ttf",
+                "Arial Bold": "arialbd.ttf",
+                "Impact": "impact.ttf",
+                "Comic Sans": "comic.ttf",
+                "Times New Roman": "times.ttf"
+            }
+            font_to_use = font_map.get(sub_font, "arialbd.ttf")
+
+        try:
+            cached_font = ImageFont.truetype(font_to_use, sub_size)
+        except IOError:
+            try:
+                cached_font = ImageFont.truetype("arial.ttf", sub_size)
+            except IOError:
+                cached_font = ImageFont.load_default()
+        # -------------------------------------------------------------------
+        
         def criar_legenda_pil(texto):
             import textwrap
             largura, altura = 1040, 500
             img = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
 
-            font_to_use = None
-            if sub_font_file and os.path.exists(sub_font_file):
-                font_to_use = sub_font_file
-            else:
-                font_map = {
-                    "Arial": "arial.ttf",
-                    "Arial Bold": "arialbd.ttf",
-                    "Impact": "impact.ttf",
-                    "Comic Sans": "comic.ttf",
-                    "Times New Roman": "times.ttf"
-                }
-                font_to_use = font_map.get(sub_font, "arialbd.ttf")
-
-            try:
-                font = ImageFont.truetype(font_to_use, sub_size)
-            except IOError:
-                try:
-                    font = ImageFont.truetype("arial.ttf", sub_size)
-                except IOError:
-                    font = ImageFont.load_default()
+            font = cached_font
                     
             # Auto-wrap text based on estimated character width vs box width
             char_width = max(10, sub_size * 0.55)
@@ -545,21 +551,26 @@ class VideoRenderer:
             x = (largura - text_w) / 2
             y = (altura - text_h) / 2
             
-            # Desenhar o contorno (stroke)
-            stroke_width = sub_outline_width
-            for ox in range(-stroke_width, stroke_width + 1):
-                for oy in range(-stroke_width, stroke_width + 1):
-                    if ox == 0 and oy == 0: continue
-                    try:
-                        draw.multiline_text((x + ox, y + oy), wrapped_text, font=font, fill=sub_outline_color, align='center')
-                    except AttributeError:
-                        draw.text((x + ox, y + oy), wrapped_text, font=font, fill=sub_outline_color)
-                    
-            # Desenhar o texto principal
+            # --- PERFORMANCE OPTIMIZATION 2: Native Pillow Stroke ---
             try:
-                draw.multiline_text((x, y), wrapped_text, font=font, fill=sub_color, align='center')
-            except AttributeError:
-                draw.text((x, y), wrapped_text, font=font, fill=sub_color)
+                # Native stroke rendering is written in C and executes instantly
+                draw.multiline_text((x, y), wrapped_text, font=font, fill=sub_color, align='center', stroke_width=sub_outline_width, stroke_fill=sub_outline_color)
+            except TypeError:
+                # Fallback for very old Pillow versions (< 6.2.0)
+                stroke_width = sub_outline_width
+                for ox in range(-stroke_width, stroke_width + 1):
+                    for oy in range(-stroke_width, stroke_width + 1):
+                        if ox == 0 and oy == 0: continue
+                        try:
+                            draw.multiline_text((x + ox, y + oy), wrapped_text, font=font, fill=sub_outline_color, align='center')
+                        except AttributeError:
+                            draw.text((x + ox, y + oy), wrapped_text, font=font, fill=sub_outline_color)
+                            
+                try:
+                    draw.multiline_text((x, y), wrapped_text, font=font, fill=sub_color, align='center')
+                except AttributeError:
+                    draw.text((x, y), wrapped_text, font=font, fill=sub_color)
+            # --------------------------------------------------------
             
             # Save to a temporary PNG file to guarantee MoviePy detects the Alpha mask perfectly
             fd, temp_path = tempfile.mkstemp(suffix=".png")

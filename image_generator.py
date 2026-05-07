@@ -3,7 +3,7 @@ import base64
 import os
 import time
 import asyncio
-from config import BANANA_API_KEY, BANANA_MODEL_KEY, BANANA_API_URL, ASSETS_DIR
+from config import GEMINI_API_KEY, ASSETS_DIR
 import usage_tracker
 
 class AIImageGenerator:
@@ -14,8 +14,8 @@ class AIImageGenerator:
         """
         Generates images using an AI API and saves them locally.
         """
-        if not BANANA_API_KEY or not BANANA_MODEL_KEY or not BANANA_API_URL:
-            raise ValueError("Banana API Key, Model Key, or URL is not configured in config.py")
+        if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY":
+            raise ValueError("Gemini API Key is not configured in config.py")
 
         if not usage_tracker.can_generate(num_to_generate):
             remaining = usage_tracker.get_remaining_today()
@@ -25,10 +25,7 @@ class AIImageGenerator:
         
         generated_images = []
         
-        payload = {
-            "apiKey": BANANA_API_KEY,
-            "modelKey": BANANA_MODEL_KEY,
-        }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key={GEMINI_API_KEY}"
 
         for i, prompt in enumerate(prompts[:num_to_generate]):
             self.log(f"  - Generating image {i+1}/{num_to_generate}: '{prompt[:50]}...'")
@@ -38,26 +35,26 @@ class AIImageGenerator:
                 break
 
             try:
-                # Forcing a 9:16 aspect ratio.
-                model_inputs = {
-                    "prompt": prompt,
-                    "negative_prompt": "blurry, low quality, text, watermark, signature, deformed",
-                    "height": 1920,
-                    "width": 1080,
-                    "num_inference_steps": 28,
-                    "guidance_scale": 7.5
+                payload = {
+                    "instances": [{"prompt": prompt}],
+                    "parameters": {
+                        "sampleCount": 1,
+                        "aspectRatio": "9:16"
+                    }
                 }
                 
-                response = requests.post(BANANA_API_URL, json={"modelInputs": model_inputs, **payload}, timeout=120)
+                headers = {"Content-Type": "application/json"}
+                response = requests.post(url, json=payload, headers=headers, timeout=120)
                 response.raise_for_status()
                 
                 output = response.json()
-                image_b64 = output.get("modelOutputs", [{}])[0].get("image_base64")
-
-                if not image_b64:
+                predictions = output.get("predictions", [])
+                
+                if not predictions or "bytesBase64" not in predictions[0]:
                     self.log(f"[!] API call succeeded but no image data was returned for prompt: {prompt}")
                     continue
 
+                image_b64 = predictions[0]["bytesBase64"]
                 img_data = base64.b64decode(image_b64)
                 
                 timestamp = int(time.time() * 1000)
@@ -72,7 +69,10 @@ class AIImageGenerator:
                 await asyncio.sleep(1)
 
             except Exception as e:
-                self.log(f"[!] API Error for prompt '{prompt}': {e}")
+                error_msg = str(e)
+                if hasattr(e, 'response') and e.response is not None:
+                    error_msg += f" - {e.response.text}"
+                self.log(f"[!] API Error for prompt '{prompt}': {error_msg}")
                 continue
                 
         self.log(f"[*] AI Generation complete. Successfully generated {len(generated_images)} images.")

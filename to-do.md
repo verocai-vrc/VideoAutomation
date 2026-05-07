@@ -19,8 +19,7 @@
 - [x] Add Transition effects (fade in, fade out, cut) + Controll for this on the GUI
 - [x] Option to Add visual Effects (Zoom-In, Zoom-Out, Pan) to medias
 - [x] Implement hook generators to maximize engagement (via Opening Hook AI directive)
-- [x] AI Image Generation (Banana API)
-    - [x] Select how many images to generate.
+- [x] AI Image Generation (mages to generate.
     - [x] Prompt each image separately via the UI.
     - [x] Enforce 9:16 aspect ratio for generated images.
     - [x] Save generated images locally to the assets folder.

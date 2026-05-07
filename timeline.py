@@ -22,7 +22,11 @@ class TimelineEditor(tk.Frame):
             import pygame
             pygame.mixer.init(frequency=44100, size=-16, channels=2)
             self.pygame = pygame
-        except:
+        except ImportError:
+            print("[!] Pygame is not installed. Timeline audio preview is disabled. Please run 'pip install pygame' to enable it.")
+            self.pygame = None
+        except Exception as e:
+            print(f"[!] Pygame audio initialization failed: {e}")
             self.pygame = None
 
         self.main_channel = None
