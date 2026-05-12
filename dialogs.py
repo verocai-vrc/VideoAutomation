@@ -107,7 +107,23 @@ def show_image_review(parent, imagens_info, initial_terms, on_approve, on_retry,
     terms_entry.pack(side=tk.LEFT, padx=10)
     terms_entry.insert(0, initial_terms)
     
-    tk.Button(bottom_panel, text="Approve & Continue", command=lambda: [review_win.review_photos.clear(), review_win.destroy(), on_approve()], bg="#4CAF50", fg="white", font=('Arial', 10, 'bold'), padx=15).pack(side=tk.RIGHT, padx=5)
-    tk.Button(bottom_panel, text="Retry Search", command=lambda: [review_win.review_photos.clear(), review_win.destroy(), on_retry(terms_entry.get())], bg="#FF9800", fg="white", font=('Arial', 10, 'bold'), padx=15).pack(side=tk.RIGHT, padx=5)
+    def approve_action():
+        review_win.review_photos.clear()
+        review_win.destroy()
+        on_approve()
+
+    def retry_action():
+        new_terms = terms_entry.get()
+        review_win.review_photos.clear()
+        review_win.destroy()
+        on_retry(new_terms)
+
+    def cancel_action():
+        review_win.review_photos.clear()
+        review_win.destroy()
+        on_cancel()
     
-    review_win.protocol("WM_DELETE_WINDOW", lambda: [review_win.review_photos.clear(), review_win.destroy(), on_cancel()])
+    tk.Button(bottom_panel, text="Approve & Continue", command=approve_action, bg="#4CAF50", fg="white", font=('Arial', 10, 'bold'), padx=15).pack(side=tk.RIGHT, padx=5)
+    tk.Button(bottom_panel, text="Retry Search", command=retry_action, bg="#FF9800", fg="white", font=('Arial', 10, 'bold'), padx=15).pack(side=tk.RIGHT, padx=5)
+    
+    review_win.protocol("WM_DELETE_WINDOW", cancel_action)

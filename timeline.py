@@ -23,7 +23,7 @@ class TimelineEditor(tk.Frame):
             pygame.mixer.init(frequency=44100, size=-16, channels=2)
             self.pygame = pygame
         except ImportError:
-            print("[!] Pygame is not installed. Timeline audio preview is disabled. Please run 'pip install pygame' to enable it.")
+            print("[!] Pygame is not installed. Timeline audio preview is disabled. Please run 'pip install pygame-ce' to enable it.")
             self.pygame = None
         except Exception as e:
             print(f"[!] Pygame audio initialization failed: {e}")
@@ -80,6 +80,26 @@ class TimelineEditor(tk.Frame):
         self.canvas.tag_bind("resize_right", "<B1-Motion>", self.on_resize_right_motion)
         self.canvas.tag_bind("resize_right", "<Enter>", lambda e: self.canvas.config(cursor="sb_h_double_arrow"))
         self.canvas.tag_bind("resize_right", "<Leave>", lambda e: self.canvas.config(cursor=""))
+        
+    def clear(self):
+        self.canvas.delete("all")
+        self._stop_audio()
+        self.is_playing = False
+        self._drag_data = {"x": 0, "y": 0, "item": None, "group_tag": None}
+        self.selected_group_tag = None
+        self.playhead_time = 0.0
+        if hasattr(self, 'time_lbl'):
+            self.time_lbl.config(text=f"0.00s / {self.duration:.2f}s")
+        self.play_btn.config(text="▶ Play", bg="#4CAF50")
+        
+    def update_duration(self, duration):
+        self.duration = max(1.0, duration)
+        self.canvas_width = self.duration * self.pixels_per_second
+        self.canvas.config(scrollregion=(0, 0, self.canvas_width, self.canvas_height))
+        self.draw_ruler()
+        self.draw_tracks(4)
+        self.playhead_id = self.canvas.create_line(0, 0, 0, self.canvas_height, fill="#ff3333", width=2, tags="playhead")
+        self.set_playhead(0)
         
     def draw_ruler(self):
         self.canvas.create_rectangle(0, 0, self.canvas_width, self.ruler_height, fill="#2b2b2b", outline="", tags="ruler")

@@ -154,16 +154,6 @@ class VideoRenderer:
         self.log("[*] A planear cronologia das imagens e a renderizar vídeo...")
         if not os.path.exists(output_dir): os.makedirs(output_dir)
         
-        video_base_original = None
-        if transcribe_mode and audio_p.lower().endswith(('.mp4', '.mov', '.avi', '.webm')):
-            video_base_original = VideoFileClip(audio_p)
-            video_base_original = fit_to_vertical(video_base_original)
-            tts_audio = video_base_original.audio
-            duracao_planeada = video_base_original.duration if video_base_original.duration else tts_audio.duration
-        else:
-            tts_audio = AudioFileClip(audio_p)
-            duracao_planeada = tts_audio.duration
-
         def fit_to_vertical(clip):
             w, h = clip.size
             target_ratio = 1080 / 1920.0
@@ -318,6 +308,16 @@ class VideoRenderer:
                 
             return clip
 
+        video_base_original = None
+        if transcribe_mode and audio_p.lower().endswith(('.mp4', '.mov', '.avi', '.webm')):
+            video_base_original = VideoFileClip(audio_p)
+            video_base_original = fit_to_vertical(video_base_original)
+            tts_audio = video_base_original.audio
+            duracao_planeada = video_base_original.duration if video_base_original.duration else tts_audio.duration
+        else:
+            tts_audio = AudioFileClip(audio_p)
+            duracao_planeada = tts_audio.duration
+
         # 1. Carregar legendas primeiro para ter tempos precisos
         try:
             subs = pysubs2.load(srt_p, encoding="utf-8")
@@ -461,132 +461,133 @@ class VideoRenderer:
         # 3. Processar Legendas (SRT -> TextClips)
         subtitle_clips = []
         
-        # --- PERFORMANCE OPTIMIZATION 1: Cache the font outside the loop ---
-        font_to_use = None
-        if sub_font_file and os.path.exists(sub_font_file):
-            font_to_use = sub_font_file
-        else:
-            font_map = {
-                "Arial": "arial.ttf",
-                "Arial Bold": "arialbd.ttf",
-                "Impact": "impact.ttf",
-                "Comic Sans": "comic.ttf",
-                "Times New Roman": "times.ttf"
-            }
-            font_to_use = font_map.get(sub_font, "arialbd.ttf")
-
-        try:
-            cached_font = ImageFont.truetype(font_to_use, sub_size)
-        except IOError:
-            try:
-                cached_font = ImageFont.truetype("arial.ttf", sub_size)
-            except IOError:
-                cached_font = ImageFont.load_default()
-        # -------------------------------------------------------------------
-        
-        def criar_legenda_pil(texto):
-            import textwrap
-            import numpy as np
-            largura, altura = 1040, 500
-            img = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(img)
-
-            font = cached_font
-                    
-            # Auto-wrap text based on estimated character width vs box width
-            char_width = max(10, sub_size * 0.55)
-            max_chars = max(15, int(900 / char_width))
-            wrapped_text = "\n".join(textwrap.wrap(texto, width=max_chars))
-
-            try:
-                bbox = draw.multiline_textbbox((0, 0), wrapped_text, font=font, align='center')
-                text_w = bbox[2] - bbox[0]
-                text_h = bbox[3] - bbox[1]
-            except AttributeError:
-                text_w, text_h = draw.textsize(wrapped_text, font=font)
-                
-            x = (largura - text_w) / 2
-            y = (altura - text_h) / 2
-            
-            # --- PERFORMANCE OPTIMIZATION 2: Native Pillow Stroke ---
-            try:
-                # Native stroke rendering is written in C and executes instantly
-                draw.multiline_text((x, y), wrapped_text, font=font, fill=sub_color, align='center', stroke_width=sub_outline_width, stroke_fill=sub_outline_color)
-            except TypeError:
-                # Fallback for very old Pillow versions (< 6.2.0)
-                stroke_width = sub_outline_width
-                for ox in range(-stroke_width, stroke_width + 1):
-                    for oy in range(-stroke_width, stroke_width + 1):
-                        if ox == 0 and oy == 0: continue
-                        try:
-                            draw.multiline_text((x + ox, y + oy), wrapped_text, font=font, fill=sub_outline_color, align='center')
-                        except AttributeError:
-                            draw.text((x + ox, y + oy), wrapped_text, font=font, fill=sub_outline_color)
-                            
-                try:
-                    draw.multiline_text((x, y), wrapped_text, font=font, fill=sub_color, align='center')
-                except AttributeError:
-                    draw.text((x, y), wrapped_text, font=font, fill=sub_color)
-            # --------------------------------------------------------
-            
-            # Converting PIL Image directly to NumPy arrays to bypass MoviePy/ImageIO transparency bugs
-            img_np = np.array(img)
-            img_rgb = img_np[:, :, :3]
-            img_alpha = img_np[:, :, 3] / 255.0
-            
-            clip = ImageClip(img_rgb)
-            try:
-                mask_clip = ImageClip(img_alpha, is_mask=True)
-            except TypeError:
-                mask_clip = ImageClip(img_alpha, ismask=True)
-            
-            if hasattr(clip, 'with_mask'): clip = clip.with_mask(mask_clip)
-            else: clip = clip.set_mask(mask_clip)
-            
-            return clip
-
-        # Group word-by-word subtitles into cleaner, multi-word lines for rendering
-        grouped_subs = []
-        if subs:
-            current_line_text = ""
-            line_start_time = subs[0].start
-            last_word_end_time = subs[0].end
-            max_chars_per_line = 60  # PIL will smartly wrap the lines inside the box bounds
-
-            for event in subs:
-                # If adding the new word exceeds the line limit, and the line isn't empty
-                if len(current_line_text) + len(event.text) + 1 > max_chars_per_line and current_line_text:
-                    # Finalize the current line and add it to our list
-                    grouped_subs.append({
-                        "text": current_line_text.strip(),
-                        "start": line_start_time,
-                        "end": last_word_end_time
-                    })
-                    # Start a new line with the current word
-                    current_line_text = event.text + " "
-                    line_start_time = event.start
-                else:
-                    # Otherwise, just add the word to the current line
-                    current_line_text += event.text + " "
-                last_word_end_time = event.end
-
-            # Add the final accumulated line after the loop finishes
-            if current_line_text:
-                grouped_subs.append({ "text": current_line_text.strip(), "start": line_start_time, "end": last_word_end_time })
-
-
-        for line in grouped_subs:
-            start = line['start'] / 1000.0
-            end = line['end'] / 1000.0
-            duration = end - start
-            if duration <= 0: continue
-            
-            clip_sub = criar_legenda_pil(line['text'])
-            if hasattr(clip_sub, 'with_start'):
-                txt = clip_sub.with_start(start).with_duration(duration).with_position(('center', sub_y))
+        if transcribe_mode:
+            # --- PERFORMANCE OPTIMIZATION 1: Cache the font outside the loop ---
+            font_to_use = None
+            if sub_font_file and os.path.exists(sub_font_file):
+                font_to_use = sub_font_file
             else:
-                txt = clip_sub.set_start(start).set_duration(duration).set_position(('center', sub_y))
-            subtitle_clips.append(txt)
+                font_map = {
+                    "Arial": "arial.ttf",
+                    "Arial Bold": "arialbd.ttf",
+                    "Impact": "impact.ttf",
+                    "Comic Sans": "comic.ttf",
+                    "Times New Roman": "times.ttf"
+                }
+                font_to_use = font_map.get(sub_font, "arialbd.ttf")
+    
+            try:
+                cached_font = ImageFont.truetype(font_to_use, sub_size)
+            except IOError:
+                try:
+                    cached_font = ImageFont.truetype("arial.ttf", sub_size)
+                except IOError:
+                    cached_font = ImageFont.load_default()
+            # -------------------------------------------------------------------
+            
+            def criar_legenda_pil(texto):
+                import textwrap
+                import numpy as np
+                largura, altura = 1040, 500
+                img = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(img)
+    
+                font = cached_font
+                        
+                # Auto-wrap text based on estimated character width vs box width
+                char_width = max(10, sub_size * 0.55)
+                max_chars = max(15, int(900 / char_width))
+                wrapped_text = "\n".join(textwrap.wrap(texto, width=max_chars))
+    
+                try:
+                    bbox = draw.multiline_textbbox((0, 0), wrapped_text, font=font, align='center')
+                    text_w = bbox[2] - bbox[0]
+                    text_h = bbox[3] - bbox[1]
+                except AttributeError:
+                    text_w, text_h = draw.textsize(wrapped_text, font=font)
+                    
+                x = (largura - text_w) / 2
+                y = (altura - text_h) / 2
+                
+                # --- PERFORMANCE OPTIMIZATION 2: Native Pillow Stroke ---
+                try:
+                    # Native stroke rendering is written in C and executes instantly
+                    draw.multiline_text((x, y), wrapped_text, font=font, fill=sub_color, align='center', stroke_width=sub_outline_width, stroke_fill=sub_outline_color)
+                except TypeError:
+                    # Fallback for very old Pillow versions (< 6.2.0)
+                    stroke_width = sub_outline_width
+                    for ox in range(-stroke_width, stroke_width + 1):
+                        for oy in range(-stroke_width, stroke_width + 1):
+                            if ox == 0 and oy == 0: continue
+                            try:
+                                draw.multiline_text((x + ox, y + oy), wrapped_text, font=font, fill=sub_outline_color, align='center')
+                            except AttributeError:
+                                draw.text((x + ox, y + oy), wrapped_text, font=font, fill=sub_outline_color)
+                                
+                    try:
+                        draw.multiline_text((x, y), wrapped_text, font=font, fill=sub_color, align='center')
+                    except AttributeError:
+                        draw.text((x, y), wrapped_text, font=font, fill=sub_color)
+                # --------------------------------------------------------
+                
+                # Converting PIL Image directly to NumPy arrays to bypass MoviePy/ImageIO transparency bugs
+                img_np = np.array(img)
+                img_rgb = img_np[:, :, :3]
+                img_alpha = img_np[:, :, 3] / 255.0
+                
+                clip = ImageClip(img_rgb)
+                try:
+                    mask_clip = ImageClip(img_alpha, is_mask=True)
+                except TypeError:
+                    mask_clip = ImageClip(img_alpha, ismask=True)
+                
+                if hasattr(clip, 'with_mask'): clip = clip.with_mask(mask_clip)
+                else: clip = clip.set_mask(mask_clip)
+                
+                return clip
+    
+            # Group word-by-word subtitles into cleaner, multi-word lines for rendering
+            grouped_subs = []
+            if subs:
+                current_line_text = ""
+                line_start_time = subs[0].start
+                last_word_end_time = subs[0].end
+                max_chars_per_line = 60  # PIL will smartly wrap the lines inside the box bounds
+    
+                for event in subs:
+                    # If adding the new word exceeds the line limit, and the line isn't empty
+                    if len(current_line_text) + len(event.text) + 1 > max_chars_per_line and current_line_text:
+                        # Finalize the current line and add it to our list
+                        grouped_subs.append({
+                            "text": current_line_text.strip(),
+                            "start": line_start_time,
+                            "end": last_word_end_time
+                        })
+                        # Start a new line with the current word
+                        current_line_text = event.text + " "
+                        line_start_time = event.start
+                    else:
+                        # Otherwise, just add the word to the current line
+                        current_line_text += event.text + " "
+                    last_word_end_time = event.end
+    
+                # Add the final accumulated line after the loop finishes
+                if current_line_text:
+                    grouped_subs.append({ "text": current_line_text.strip(), "start": line_start_time, "end": last_word_end_time })
+    
+    
+            for line in grouped_subs:
+                start = line['start'] / 1000.0
+                end = line['end'] / 1000.0
+                duration = end - start
+                if duration <= 0: continue
+                
+                clip_sub = criar_legenda_pil(line['text'])
+                if hasattr(clip_sub, 'with_start'):
+                    txt = clip_sub.with_start(start).with_duration(duration).with_position(('center', sub_y))
+                else:
+                    txt = clip_sub.set_start(start).set_duration(duration).set_position(('center', sub_y))
+                subtitle_clips.append(txt)
 
         # 4. Sobrepor tudo
         if not (base_clips + overlaid_clips):
@@ -610,22 +611,14 @@ class VideoRenderer:
             base_composite = base_composite.set_duration(duracao_final)
             
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        out = os.path.join(output_dir, f"video_legendado_{timestamp}.mp4")
+        if transcribe_mode:
+            out = os.path.join(output_dir, f"video_legendado_{timestamp}.mp4")
+        else:
+            out = os.path.join(output_dir, f"video_base_{timestamp}.mp4")
+            
         logger = UIProgressLogger(self.progress_cb) if UIProgressLogger and self.progress_cb else "bar"
         threads = os.cpu_count() or 4
         
-        temp_base_path = None
-        if not transcribe_mode and subtitle_clips:
-            self.log("[*] Renderizando fundo em vídeo (Passo 1 de 2) para garantir aplicação das legendas...")
-            temp_base_path = os.path.join(output_dir, f"temp_bg_{timestamp}.mp4")
-            base_composite.write_videofile(temp_base_path, fps=24, codec="libx264", audio_codec="aac", preset="ultrafast", threads=threads, logger=logger)
-            
-            try: base_composite.close()
-            except Exception: pass
-            
-            base_composite = VideoFileClip(temp_base_path)
-            self.log("[*] Renderizando legendas sobre o vídeo (Passo 2 de 2)...")
-
         # Isolate subtitles on the absolute top layer using a separate composition
         video_final = CompositeVideoClip([base_composite] + subtitle_clips, size=(1080, 1920))
         if hasattr(video_final, 'with_duration'): video_final = video_final.with_duration(duracao_final)
@@ -636,9 +629,6 @@ class VideoRenderer:
         # Clean up MoviePy clips to prevent FFmpeg memory leaks
         try:
             video_final.close()
-            if temp_base_path and os.path.exists(temp_base_path):
-                base_composite.close()
-                os.remove(temp_base_path)
             if video_base_original: video_base_original.close()
             if hasattr(tts_audio, 'close'): tts_audio.close()
         except Exception as e:
