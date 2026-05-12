@@ -535,7 +535,10 @@ class VideoRenderer:
             img_alpha = img_np[:, :, 3] / 255.0
             
             clip = ImageClip(img_rgb)
-            mask_clip = ImageClip(img_alpha, ismask=True)
+            try:
+                mask_clip = ImageClip(img_alpha, is_mask=True)
+            except TypeError:
+                mask_clip = ImageClip(img_alpha, ismask=True)
             
             if hasattr(clip, 'with_mask'): clip = clip.with_mask(mask_clip)
             else: clip = clip.set_mask(mask_clip)
@@ -594,29 +597,48 @@ class VideoRenderer:
             
         base_composite = CompositeVideoClip(base_clips + overlaid_clips, size=(1080, 1920), bg_color=(0,0,0))
         
-        # Isolate subtitles on the absolute top layer using a separate composition
-        video_final = CompositeVideoClip([base_composite] + subtitle_clips, size=(1080, 1920))
-        
         if audio_layers:
             final_audio = CompositeAudioClip(audio_layers)
-            if hasattr(video_final, 'with_audio'):
-                video_final = video_final.with_audio(final_audio)
+            if hasattr(base_composite, 'with_audio'):
+                base_composite = base_composite.with_audio(final_audio)
             else:
-                video_final = video_final.set_audio(final_audio)
+                base_composite = base_composite.set_audio(final_audio)
                 
-        if hasattr(video_final, 'with_duration'):
-            video_final = video_final.with_duration(duracao_final)
+        if hasattr(base_composite, 'with_duration'):
+            base_composite = base_composite.with_duration(duracao_final)
         else:
-            video_final = video_final.set_duration(duracao_final)
+            base_composite = base_composite.set_duration(duracao_final)
             
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         out = os.path.join(output_dir, f"video_legendado_{timestamp}.mp4")
         logger = UIProgressLogger(self.progress_cb) if UIProgressLogger and self.progress_cb else "bar"
-        video_final.write_videofile(out, fps=24, codec="libx264", audio_codec="aac", logger=logger)
+        threads = os.cpu_count() or 4
+        
+        temp_base_path = None
+        if not transcribe_mode and subtitle_clips:
+            self.log("[*] Renderizando fundo em vídeo (Passo 1 de 2) para garantir aplicação das legendas...")
+            temp_base_path = os.path.join(output_dir, f"temp_bg_{timestamp}.mp4")
+            base_composite.write_videofile(temp_base_path, fps=24, codec="libx264", audio_codec="aac", preset="ultrafast", threads=threads, logger=logger)
+            
+            try: base_composite.close()
+            except Exception: pass
+            
+            base_composite = VideoFileClip(temp_base_path)
+            self.log("[*] Renderizando legendas sobre o vídeo (Passo 2 de 2)...")
+
+        # Isolate subtitles on the absolute top layer using a separate composition
+        video_final = CompositeVideoClip([base_composite] + subtitle_clips, size=(1080, 1920))
+        if hasattr(video_final, 'with_duration'): video_final = video_final.with_duration(duracao_final)
+        else: video_final = video_final.set_duration(duracao_final)
+        
+        video_final.write_videofile(out, fps=24, codec="libx264", audio_codec="aac", preset="ultrafast", threads=threads, logger=logger)
         
         # Clean up MoviePy clips to prevent FFmpeg memory leaks
         try:
             video_final.close()
+            if temp_base_path and os.path.exists(temp_base_path):
+                base_composite.close()
+                os.remove(temp_base_path)
             if video_base_original: video_base_original.close()
             if hasattr(tts_audio, 'close'): tts_audio.close()
         except Exception as e:

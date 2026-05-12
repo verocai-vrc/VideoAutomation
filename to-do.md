@@ -1,8 +1,45 @@
 # To-do list
-
 ## Pending Tasks
+g- when thinking about image order, the file name for each image has keywords relating to the content they represent. The image order must match the video narration context.
 
-## Completed
+### AI & Scripting Enhancements
+- [ ] Integrate additional AI Models (OpenAI, Claude, DeepSeek)
+- [ ] Implement Saveable/Loadable Custom Prompt Templates
+- [ ] Add Video Theme Presets (e.g., Top 5, Fun Fact) that auto-adjust prompt, tone, and pacing
+- [ ] Integrate premium AI Voice APIs (ElevenLabs, OpenAI TTS)
+- [ ] Add Voice Emotion & Pacing Control Sliders
+
+### Media & Visuals
+- [ ] Develop Auto B-Roll Integration (fetch stock video from Pexels/Pixabay based on script)
+- [ ] Add Midjourney API support for AI Image Generation
+- [ ] Implement Advanced Visual Effects (Ken Burns, Parallax, Glitch, VHS)
+- [ ] Add a Transition Duration Slider
+- [ ] Create a Custom Watermark / Channel Logo Overlay Uploader
+
+### Audio & Subtitles
+- [ ] Implement Smart Audio Ducking (Auto-lowers BGM when the narration speaks)
+- [ ] Add Subtitle Style Presets (e.g., "Hormozi Bold", "Minimalist Tech", "TikTok Standard")
+- [ ] Develop Word-by-Word Subtitle Animations (Pop-in, Color Highlighting, Spring)
+- [ ] Implement Auto-Emoji Insertion (AI adds context-aware emojis to subtitles)
+- [ ] Upgrade Subtitle Preview to an Interactive Canvas (drag-and-drop to position subtitles)
+
+### UI & Project Management
+- [ ] Transform app into a persistent "Studio" workspace (opens maximized/full window size by default)
+- [ ] Add a fullscreen view option toggle in the main UI
+- [ ] Implement a live project preview screen (9:16 aspect ratio) directly in the main window showing the currently built project
+- [ ] Make the Subtitle Style tab toggleable/collapsible to declutter the workspace
+- [ ] Allow regenerating/editing the script and re-generating narration/subtitles directly from the preview workspace if unsatisfied
+- [ ] Implement Project State Handling (Save/Load GUI settings as a `.json` file)
+- [ ] Create a History / Recent Projects Dashboard
+- [ ] Transition the Timeline Editor to a persistent Expandable Integrated Timeline panel at the bottom of the main UI
+- [ ] Add a "Pre-Generate Assets" button to separate the asset generation/review phase from the final rendering phase
+
+### Output, Rendering & Publishing
+- [ ] Add Aspect Ratio Selector (9:16 Shorts, 16:9 YouTube, 1:1 Instagram)
+- [ ] Add Resolution options (1080p, 4K) & Rendering Quality Presets (Fast, Studio)
+- [ ] Investigate/Implement GPU acceleration for MoviePy rendering
+- [ ] Build Social Media API Setup (OAuth for YouTube, TikTok, Instagram)
+- [ ] Implement Auto-Publish / Auto-Draft functionality upon render completion
 
 ### Functionalities
 - [x] Advanced timeline editor for manual image/overlay timing adjustments
