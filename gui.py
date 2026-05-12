@@ -66,6 +66,7 @@ class AutomacaoGUI:
         self.new_search_terms = ""
         self.images_cancelled = False
         self.last_generated_media_path = None
+        self.custom_timeline = None
         
         # --- Main Scrollable Layout ---
         self.main_canvas = tk.Canvas(root, bg=bg_color, highlightthickness=0)
@@ -548,6 +549,7 @@ class AutomacaoGUI:
             self.root.after(0, lambda: self.btn.config(state='normal'))
             
     async def async_workflow(self, model, prompt, terms, out_dir, local_imgs, use_images, use_videos, bg_music, bg_volume, loop_bg, num_images, enable_narration, transcribe_mode, sub_font, sub_font_file, sub_color, sub_outline_color, sub_outline_width, sub_size, transition, sub_y, visual_effect, image_source):
+        self.custom_timeline = None
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         base_name = f"projeto_{timestamp}"
         bot = ParceiroAutomacao(model=model, log_cb=self.log, progress_cb=self.update_progress)

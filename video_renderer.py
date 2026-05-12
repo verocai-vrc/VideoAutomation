@@ -71,58 +71,81 @@ class VideoRenderer:
             script_timings = []
 
         guiao_lower = script_text.lower()
-        matched = []
-        unmatched = []
+        
+        image_matches = []
         for info in imagens_info:
             kw = info['keyword'].lower().strip()
-            match = re.search(r'\b' + re.escape(kw) + r'\b', guiao_lower) if kw else None
-            idx = match.start() if match else guiao_lower.find(kw)
-            if idx != -1 and kw:
+            idx = -1
+            if kw:
+                match = re.search(r'\b' + re.escape(kw) + r'\b', guiao_lower)
+                if match:
+                    idx = match.start()
+                else:
+                    idx = guiao_lower.find(kw)
+            
+            if idx != -1:
                 t = 0
                 for start_idx, time in reversed(script_timings):
                     if idx >= start_idx:
                         t = time
                         break
-                matched.append((t, info))
+                image_matches.append({"info": info, "t": t, "matched": True})
             else:
-                unmatched.append(info)
-
-        matched.sort(key=lambda x: x[0])
+                image_matches.append({"info": info, "t": -1, "matched": False})
+                
+        matched = sorted([m for m in image_matches if m['matched']], key=lambda x: x['t'])
+        unmatched = [m for m in image_matches if not m['matched']]
+        
+        final_schedule = matched[:]
+        
+        if not final_schedule and unmatched:
+            step = duracao_planeada / max(1, len(unmatched))
+            for i, u in enumerate(unmatched):
+                final_schedule.append({"info": u["info"], "t": i * step})
+            unmatched = []
+            
+        for u in unmatched:
+            best_gap_idx = 0
+            max_gap = final_schedule[0]['t'] - 0 if final_schedule else 0
+            insert_t = max_gap / 2.0
+            
+            for i in range(len(final_schedule) - 1):
+                gap = final_schedule[i+1]['t'] - final_schedule[i]['t']
+                if gap > max_gap:
+                    max_gap = gap
+                    best_gap_idx = i + 1
+                    insert_t = final_schedule[i]['t'] + gap / 2.0
+                    
+            if final_schedule:
+                end_gap = duracao_planeada - final_schedule[-1]['t']
+                if end_gap > max_gap:
+                    max_gap = end_gap
+                    best_gap_idx = len(final_schedule)
+                    insert_t = final_schedule[-1]['t'] + end_gap / 2.0
+            
+            final_schedule.insert(best_gap_idx, {"info": u["info"], "t": insert_t})
+            
+        if final_schedule and not transcribe_mode:
+            final_schedule[0]['t'] = 0.0
         
         timeline_plan = []
         if transcribe_mode:
             timeline_plan.append({"track": 1, "start": 0.0, "duration": duracao_planeada, "path": audio_p, "text": "Base Video", "id": "base_main"})
-            for i, (t, info) in enumerate(matched):
-                next_t = matched[i+1][0] if i + 1 < len(matched) else duracao_planeada
+            for i, item in enumerate(final_schedule):
+                t = item['t']
+                next_t = final_schedule[i+1]['t'] if i + 1 < len(final_schedule) else duracao_planeada
                 dur = min(4.0, next_t - t)
                 if dur > 0:
+                    info = item['info']
                     timeline_plan.append({"track": 2, "start": t, "duration": dur, "path": info['path'], "text": info['keyword'], "id": f"ov_{i}"})
         else:
-            if imagens_info:
-                if not matched:
-                    dur = duracao_planeada / max(1, len(unmatched))
-                    for i, info in enumerate(unmatched):
-                        timeline_plan.append({"track": 1, "start": i*dur, "duration": dur, "path": info['path'], "text": info['keyword'], "id": f"base_{i}"})
-                else:
-                    if matched[0][0] > 0.5:
-                        if unmatched: matched.insert(0, (0.0, unmatched.pop(0)))
-                        else: matched[0] = (0.0, matched[0][1])
-                    else:
-                        matched[0] = (0.0, matched[0][1])
-                        
-                    starts, infos = [m[0] for m in matched], [m[1] for m in matched]
-                    
-                    if unmatched:
-                        last_t = starts[-1]
-                        step = (duracao_planeada - last_t) / (len(unmatched) + 1)
-                        for i, u in enumerate(unmatched):
-                            starts.append(last_t + step * (i + 1))
-                            infos.append(u)
-                            
-                    for i in range(len(starts)):
-                        dur = (starts[i+1] if i+1 < len(starts) else duracao_planeada) - starts[i]
-                        if dur > 0:
-                            timeline_plan.append({"track": 1, "start": starts[i], "duration": dur, "path": infos[i]['path'], "text": infos[i]['keyword'], "id": f"base_{i}"})
+            for i, item in enumerate(final_schedule):
+                t = item['t']
+                next_t = final_schedule[i+1]['t'] if i + 1 < len(final_schedule) else duracao_planeada
+                dur = next_t - t
+                if dur > 0:
+                    info = item['info']
+                    timeline_plan.append({"track": 1, "start": t, "duration": dur, "path": info['path'], "text": info['keyword'], "id": f"base_{i}"})
                             
         return duracao_planeada, timeline_plan
 
@@ -322,6 +345,9 @@ class VideoRenderer:
             else:
                 base_clips.append(video_base_original.set_start(0))
 
+        if custom_timeline is None:
+            _, custom_timeline = self.planejar_timeline(audio_p, srt_p, imagens_info, transcribe_mode)
+
         if custom_timeline:
             for item in custom_timeline:
                 path = item['path']
@@ -348,86 +374,6 @@ class VideoRenderer:
                         overlaid_clips.append(c)
                     except Exception as e:
                         self.log(f"[!] Erro ao criar overlay de {path}: {e}")
-        else:
-            if video_base_original is not None:
-                if imagens_info:
-                    for info in imagens_info:
-                        kw = info['keyword'].lower().strip()
-                        match = re.search(r'\b' + re.escape(kw) + r'\b', guiao_lower) if kw else None
-                        idx = match.start() if match else guiao_lower.find(kw)
-                            
-                        if idx != -1 and kw:
-                            t = 0
-                            for start_idx, time in reversed(script_timings):
-                                if idx >= start_idx:
-                                    t = time
-                                    break
-                            matched.append((t, info['path']))
-                            
-                    matched.sort(key=lambda x: x[0])
-                    
-                    for i, (t, path) in enumerate(matched):
-                        max_dur = 4.0
-                        next_t = matched[i+1][0] if i + 1 < len(matched) else duracao_planeada
-                        dur = min(max_dur, next_t - t)
-                        if dur <= 0: continue
-                        
-                        try:
-                            clip = get_overlay_clip(path, dur, sub_y, transition)
-                            if hasattr(clip, 'with_start'): clip = clip.with_start(t)
-                            else: clip = clip.set_start(t)
-                            overlaid_clips.append(clip)
-                        except Exception as e:
-                            self.log(f"[!] Erro ao criar overlay de {path}: {e}")
-            else:
-                if imagens_info:
-                    for info in imagens_info:
-                        kw = info['keyword'].lower().strip()
-                        match = re.search(r'\b' + re.escape(kw) + r'\b', guiao_lower) if kw else None
-                        idx = match.start() if match else guiao_lower.find(kw)
-                            
-                        if idx != -1 and kw:
-                            t = 0
-                            for start_idx, time in reversed(script_timings):
-                                if idx >= start_idx:
-                                    t = time
-                                    break
-                            matched.append((t, info['path']))
-                        else:
-                            unmatched.append(info['path'])
-                            
-                    matched.sort(key=lambda x: x[0])
-                    
-                    if not matched:
-                        dur = duracao_planeada / max(1, len(unmatched))
-                        for i, img in enumerate(unmatched):
-                            c = get_media_clip(img, dur)
-                            if hasattr(c, 'with_start'): c = c.with_start(i * dur)
-                            else: c = c.set_start(i * dur)
-                            base_clips.append(c)
-                    else:
-                        if matched[0][0] > 0.5:
-                            if unmatched: matched.insert(0, (0.0, unmatched.pop(0)))
-                            else: matched[0] = (0.0, matched[0][1])
-                        else:
-                            matched[0] = (0.0, matched[0][1])
-                            
-                        starts, paths = [m[0] for m in matched], [m[1] for m in matched]
-                        
-                        if unmatched:
-                            last_t = starts[-1]
-                            step = (duracao_planeada - last_t) / (len(unmatched) + 1)
-                            for i, u in enumerate(unmatched):
-                                starts.append(last_t + step * (i + 1))
-                                paths.append(u)
-                                
-                        for i in range(len(starts)):
-                            dur = (starts[i+1] if i+1 < len(starts) else duracao_planeada) - starts[i]
-                            if dur > 0:
-                                c = get_media_clip(paths[i], dur)
-                                if hasattr(c, 'with_start'): c = c.with_start(starts[i])
-                                else: c = c.set_start(starts[i])
-                                base_clips.append(c)
 
         duracao_final = duracao_planeada
 
@@ -449,9 +395,20 @@ class VideoRenderer:
             try:
                 self.log(f"[*] A adicionar música de fundo: {os.path.basename(bg_music_path)}")
                 bg_clip = AudioFileClip(bg_music_path)
-                if hasattr(bg_clip, 'multiply_volume'): bg_clip = bg_clip.multiply_volume(bg_volume)
-                elif hasattr(bg_clip, 'with_volume_multiplier'): bg_clip = bg_clip.with_volume_multiplier(bg_volume)
-                elif hasattr(bg_clip, 'volumex'): bg_clip = bg_clip.volumex(bg_volume)
+                
+                try:
+                    # MoviePy v2.0+
+                    from moviepy.audio.fx.MultiplyVolume import MultiplyVolume
+                    bg_clip = bg_clip.with_effects([MultiplyVolume(bg_volume)])
+                except ImportError:
+                    # MoviePy v1.x fallback
+                    try:
+                        from moviepy.audio.fx.volumex import volumex # type: ignore
+                        bg_clip = volumex(bg_clip, bg_volume)
+                    except ImportError:
+                        if hasattr(bg_clip, 'multiply_volume'): bg_clip = bg_clip.multiply_volume(bg_volume)
+                        elif hasattr(bg_clip, 'with_volume_multiplier'): bg_clip = bg_clip.with_volume_multiplier(bg_volume)
+                        elif hasattr(bg_clip, 'volumex'): bg_clip = bg_clip.volumex(bg_volume)
                 
                 bg_start = 0.0
                 bg_dur = None
@@ -503,7 +460,6 @@ class VideoRenderer:
 
         # 3. Processar Legendas (SRT -> TextClips)
         subtitle_clips = []
-        temp_subtitle_files = []
         
         # --- PERFORMANCE OPTIMIZATION 1: Cache the font outside the loop ---
         font_to_use = None
@@ -530,6 +486,7 @@ class VideoRenderer:
         
         def criar_legenda_pil(texto):
             import textwrap
+            import numpy as np
             largura, altura = 1040, 500
             img = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
@@ -572,13 +529,18 @@ class VideoRenderer:
                     draw.text((x, y), wrapped_text, font=font, fill=sub_color)
             # --------------------------------------------------------
             
-            # Save to a temporary PNG file to guarantee MoviePy detects the Alpha mask perfectly
-            fd, temp_path = tempfile.mkstemp(suffix=".png")
-            os.close(fd)
-            img.save(temp_path, format="PNG")
-            temp_subtitle_files.append(temp_path)
+            # Converting PIL Image directly to NumPy arrays to bypass MoviePy/ImageIO transparency bugs
+            img_np = np.array(img)
+            img_rgb = img_np[:, :, :3]
+            img_alpha = img_np[:, :, 3] / 255.0
             
-            return ImageClip(temp_path, transparent=True)
+            clip = ImageClip(img_rgb)
+            mask_clip = ImageClip(img_alpha, ismask=True)
+            
+            if hasattr(clip, 'with_mask'): clip = clip.with_mask(mask_clip)
+            else: clip = clip.set_mask(mask_clip)
+            
+            return clip
 
         # Group word-by-word subtitles into cleaner, multi-word lines for rendering
         grouped_subs = []
@@ -624,6 +586,12 @@ class VideoRenderer:
             subtitle_clips.append(txt)
 
         # 4. Sobrepor tudo
+        if not (base_clips + overlaid_clips):
+            c = ColorClip(size=(1080, 1920), color=(0,0,0))
+            if hasattr(c, 'with_duration'): c = c.with_duration(duracao_planeada)
+            else: c = c.set_duration(duracao_planeada)
+            base_clips.append(c)
+            
         base_composite = CompositeVideoClip(base_clips + overlaid_clips, size=(1080, 1920), bg_color=(0,0,0))
         
         # Isolate subtitles on the absolute top layer using a separate composition
@@ -651,14 +619,6 @@ class VideoRenderer:
             video_final.close()
             if video_base_original: video_base_original.close()
             if hasattr(tts_audio, 'close'): tts_audio.close()
-            
-            # Clean up the temporary subtitle PNG files
-            for temp_file in temp_subtitle_files:
-                try:
-                    if os.path.exists(temp_file):
-                        os.remove(temp_file)
-                except OSError:
-                    pass
         except Exception as e:
             self.log(f"[!] Aviso de limpeza de memória: {e}")
             

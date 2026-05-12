@@ -1,7 +1,6 @@
 # To-do list
 
 ## Pending Tasks
----
 
 ## Completed
 
@@ -47,3 +46,10 @@
 - [x] the narration is including the time stamps and ruining user experience
 - [x] timeline editor window is blank, Cant edit the timeline or even tell the program to keep going without editing. Program gets softlocked waiting for response that cant be given
 - [x] Subtitles are STILL not visible when generating videos with images
+- [x] volume bar doesnt change background audio volume
+- [x] program must analize script to customize every selected image duration and order relating to ( and in sync with) the narration
+- [x] The fix you made for image sync didnt work. now most of the video is a black screen and images dont appear when their topic is brought up.
+    - [x] Every image uploaded MUST be in the video.
+    - [x] the program needs to infere image order.
+    - [x] image doesnt have to vanish right after its word mention passess, rather it only goes out when the next image is called, to prevent image-less black screens
+    - [x] in testing the output: the video only showed the first image, and by alphabetical order rather than contextual order.
