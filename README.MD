@@ -18,6 +18,7 @@ The program acts as an end-to-end production pipeline:
 *   **Text AI:** [Ollama](https://ollama.com/)
 *   **Voice & Subtitles:** Edge-TTS (Microsoft) & Pysubs2
 *   **Video & Image Processing:** MoviePy, Pillow (PIL), NumPy
+*   **Video, Audio & Image Processing:** MoviePy, Pillow (PIL), NumPy, Pygame-CE
 *   **Asset Searching:** DuckDuckGo Search API
 *   **GUI:** Tkinter
 
@@ -26,13 +27,19 @@ The program acts as an end-to-end production pipeline:
 ## 📋 Features
 
 ### Currently Implemented:
+- [x] **Studio Workspace Layout:** A modern, fullscreen UI featuring collapsible settings panels, a central 9:16 live project preview, and a dual-phase execution system (Pre-Generate Assets -> Final Render) for safe editing.
+- [x] **Versatile Workflow Modes:** Seamlessly switch between generating a full AI Video from scratch, Illustrating an uploaded video with B-Roll, or using the `< Subtitle this video >` mode to purely transcribe and burn subtitles into existing media.
+- [x] **Integrated Timeline Editor:** A persistent timeline panel for manual media adjustments. Features drag-and-drop timing controls, track management, and real-time audio playback preview (via Pygame-CE) to ensure perfect synchronization before rendering.
 - [x] **Automated Script Generation & Review:** Generate highly detailed scripts dynamically to fit +60s timelines, with the ability to pause, review, and manually edit the script before generation.
+- [x] **Script Tones & Hooks:** Maximize viewer retention by customizing the AI's personality (Educational, Humorous, Dramatic) and generating powerful opening hooks.
 - [x] **Professional Narration:** High-fidelity English TTS using neural voices (Toggleable for when you just want to subtitle a local video).
 - [x] **Dynamic Media Handling:** Import local videos/images and view live thumbnail previews directly in the modern UI.
 - [x] **Smart Internet Search & Fallback:** Automatically fetches images via DuckDuckGo, with a seamless fallback to Wikimedia Commons if rate-limited. Includes a UI window to review, approve, or retry image searches.
+- [x] **AI Image Generation:** Direct integration with Google Imagen to generate custom 9:16 vertical AI images when stock photos aren't enough (includes safety limits and cost control tracking).
 - [x] **Video Overlays & B-Roll:** Intelligently overlays images on top of base videos, automatically timed to when their descriptive keywords are spoken (using Whisper AI).
 - [x] **Cinematic Effects & Transitions:** Easily apply visual effects (Zoom-in, Zoom-out, Pan) and transitions (Fade In/Out, Cut) directly from the GUI.
 - [x] **Advanced Subtitle Engine:** Word-by-word synced subtitles drawn completely in-memory using Pillow. Supports custom fonts, colors, sizing, and Y-positioning, complete with a real-time cellphone-shaped preview screen.
+- [x] **Advanced Subtitle Engine:** Word-by-word synced subtitles drawn completely in-memory using Pillow (bypassing MoviePy transparency bugs). Supports custom fonts, colors, stroke widths, sizing, and Y-positioning.
 - [x] **Background Audio Engine:** Add background music with adjustable volume that automatically loops to fit the video length.
 - [x] **Vertical Composition:** Videos and images are dynamically resized to standard 9:16 vertical format (1080x1920) with smart layout boundaries so overlays never cover subtitles.
 - [x] **Highly Resilient Architecture:** Includes HTTP auto-retries, memory-safe image validation, fallback mechanisms, and robust timestamped file exports to prevent overwriting.
@@ -47,6 +54,7 @@ The program acts as an end-to-end production pipeline:
    python -m venv venv
    source venv/bin/activate  # or venv\Scripts\activate on Windows
    pip install requests moviepy edge-tts pysubs2 duckduckgo_search pillow numpy
+   pip install requests moviepy edge-tts pysubs2 duckduckgo_search pillow numpy pygame-ce
    ```
 
 2. **External Dependencies:**
@@ -65,3 +73,9 @@ The program acts as an end-to-end production pipeline:
   - [ ] Create a GUI timeline component to visualize tracks.
   - [ ] Implement drag-and-drop for start times and durations.
   - [ ] Add preview playback for synchronization checking.
+- [ ] **Project State Handling:** Save and load GUI configurations as `.json` project files.
+- [ ] **Video Theme Presets:** Auto-adjust prompts, tones, and pacing based on themes like "Top 5" or "Fun Fact".
+- [ ] **Subtitle Animations:** Word-by-word pop-in, color highlighting, spring animations, and AI context-aware emojis.
+- [ ] **Auto B-Roll Integration:** Fetch free stock video from Pexels/Pixabay via API.
+- [ ] **Social Media Publishing:** Implement Auto-Publish to YouTube Shorts/TikTok upon render completion.
+- [ ] **GPU Acceleration:** Implement hardware encoding options for FFmpeg to drastically speed up rendering.
